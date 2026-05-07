@@ -1,123 +1,143 @@
 # Crystallized Time
 
-*Toward a Generative Music Framework Grounded in Driven Many-Body Dynamics*
+*An Audiovisual Installation Grounded in Driven Many-Body Dynamics*
 
-`Draft 0.2 — Research in Progress`
+`Draft 0.3 — Research in Progress`
 
 ---
 
 ## Abstract
 
-This document proposes a framework for generative music in which compositional structure is not designed but **measured** — read out from the dynamics of a simulated driven many-body system that exhibits time-crystalline behavior. The central claim is narrow and defensible: discrete time crystals possess three dynamical properties — interaction-determined sub-harmonic periodicity, rigidity under perturbation, and discrete period-multiplication as a phase rather than a parameter — that map directly onto musical behaviors that polyrhythmic traditions have refined empirically. Simulating such a system and sonifying its observables produces those behaviors as physical consequences rather than as authored rules.
+This document describes the conceptual and technical foundations of an audiovisual installation in which a simulated driven many-body system — exhibiting the dynamics of a discrete time crystal — generates music and visual structure in real time, and in which the presence of visitors directly perturbs the system's trajectory. The installation makes a specific structural claim about music perceptible as direct experience: that rhythm, polyrhythm, and macro-form can emerge from the same physics that governs how stable patterns appear in driven matter, and that an observer is not separate from the work but is part of the dynamical system that produces it.
 
-These are early-stage research notes. The aim is to identify the smallest defensible substrate and the smallest defensible measurement-to-music mapping, and to build outward from there.
+The framework draws on two distinct registers, and this document is careful to keep them distinct. The **technical substrate** is described in classical physical terms: a periodically driven spin chain whose period-multiplication, rigidity, and phase-transition behavior are well-characterized phenomena, simulated faithfully and sonified deliberately. The **artistic premise** is described in the language of observation and emergence, because that is the language that most economically describes what the visitor experiences. The two registers are not in conflict — the artistic experience is a true description of the technical situation, viewed from inside it.
 
----
-
-## 1. Introduction
-
-Music and physics share a deep structural kinship in one specific respect: both are concerned with how stable patterns emerge from the interaction of simpler periodic elements. This document focuses on a particular case where the kinship is unusually tight — the relationship between **driven Floquet systems** and **polyrhythmic music** — and proposes that simulating the former is a viable substrate for generating the latter.
-
-The entry point is the discrete time crystal: a phase of matter, realized experimentally since 2017, that responds to a periodic external drive at an integer fraction of the drive frequency. The system, not the composer, picks the period. That period is robust against small changes in the drive, against disorder in the system's parameters, and against modest thermal noise. These three properties — *self-determined period, rigidity, and phase-like discreteness* — are the basis of everything that follows.
-
-What this document is **not** claiming: that music is quantum mechanical, that listener consciousness collapses wavefunctions, or that the full apparatus of quantum theory (superposition, entanglement, the measurement problem) maps onto compositional structure. Earlier framings reached for those analogies; they are stretched past where they hold. Floquet period-multiplication is enough.
+These are early-stage research notes for a work in progress.
 
 ---
 
-## 2. Foundations
+## 1. The Installation
 
-### 2.1 Driven Systems and Period-Multiplication
+A visitor enters a room. At its center stands a pillar. Sound fills the space; light moves on and around the pillar. Both are being generated in real time by a physical simulation running in the substrate of the installation. Nothing is pre-recorded, nothing is looped, and nothing repeats — though patterns lock and hold for as long as the conditions that produced them persist.
 
-A driven system is one acted on by a periodic external force at frequency *F*. Most driven systems respond at *F*: push a pendulum at its resonant frequency and it swings at that frequency. A discrete time crystal is a driven many-body system that, despite being kicked at *F*, settles into a steady state oscillating at *F/n* for some integer *n* > 1. The drive period is *T*; the system's period is *nT*.
+The visitor's presence is registered: their position in the room, their movement, and — depending on the version of the installation — biometric signals such as heart rate or galvanic response. These measurements feed into the parameters of the simulation. The system the visitor is hearing and seeing is not a system that exists independently of them. It is a system whose trajectory is being shaped, in real time, by the fact that they are in the room.
 
-This is **period-multiplication**, and it is the key property. Three things to note:
+The visitor is not told this. The piece offers no instructions, no interface, no labels. The relationship between presence and output is something to be discovered — through stillness, through movement, through attention — and the discovery is the experience the work is designed to produce.
 
-The integer *n* is not specified by the drive. It emerges from the interactions inside the system. Different couplings, different disorder profiles, and different initial conditions can land the system in *n = 2*, *n = 3*, or higher. The composer does not choose *n*; the substrate does.
-
-Once the system locks into period *nT*, that period is **rigid**. Small changes to the drive — imperfect pulses, parameter drift, thermal jitter — do not break the lock. The system absorbs the perturbation and continues at *nT*. This is what physicists mean by saying a time crystal is a *phase* of matter rather than a tuned configuration: it has the stability of ice rather than of a balanced pencil.
-
-Outside the time-crystal phase, the same system either responds at the drive frequency (trivial) or thermalizes into noise. The transition between these regimes is sharp. There is no smooth gradient between "locked at 2T" and "locked at 3T" — the system is in one phase or the other.
-
-### 2.2 Why This Matters Musically
-
-Three musical affordances follow directly:
-
-A groove that **self-corrects**. If you build a rhythmic layer on top of a simulated time crystal and the simulation is perturbed — by a parameter change, by interaction with another layer, by listener input — the layer returns to its period rather than drifting. This is what drummers mean by "deep pocket": a groove that absorbs disturbance instead of being knocked off it.
-
-A period that is **discovered, not assigned**. Conventional generative systems are told what meter to play in. A Floquet substrate is told only the drive period and the interaction structure; it finds *n* on its own. The compositional act is choosing the conditions under which a particular *n* becomes likely, not choosing *n* directly.
-
-**Phase transitions** as macro-structural events. Pushing the system from one regime to another is a discrete event, not a gradual interpolation. This gives a generative system a vocabulary of structural shifts — locking, melting, re-crystallizing — that correspond to recognizable musical gestures (a groove establishing, dissolving, re-forming) without needing to be scripted.
+When a second visitor enters, the dynamics change again. Not by averaging two inputs, and not by switching modes, but because the substrate is a coupled many-body system whose response to multiple simultaneous perturbations is itself determined by its physics. Two visitors produce a piece neither of them would have produced alone, in a way that is genuinely a property of the system rather than a designed feature.
 
 ---
 
-## 3. Polyrhythm as Coupled Sub-Harmonics
+## 2. Why Quantum Mechanics
 
-Certain musical traditions construct rhythm not as nested subdivisions of a uniform meter but as **independent periodic layers** sharing a common pulse. Meshuggah, Tigran Hamasyan, Carnatic konnakol, and Hindustani tala all do versions of this. A composition might run a layer of 5+5+3 (period 13) against a layer of 3+2+4 (period 9) over a shared underlying pulse.
+The installation is grounded in a particular reading of quantum mechanics, and the relevance of that reading to the artistic premise should be stated plainly before any technical content.
 
-The full system returns to its starting configuration after lcm(13, 9) = 117 pulses. Because gcd(13, 9) = 1, that recurrence is maximally delayed; this is why these traditions reach for prime or coprime groupings. Resolution at 117 is not a designed climax but an arithmetic inevitability, and the ear hears it as such — as something the music *had* to do, not something the composer chose.
+In popular culture, quantum mechanics is associated with the idea that observation collapses possibilities into outcomes — that consciousness, somehow, brings reality into focus. This is a misreading. What actually fixes a quantum state is **interaction**: any sufficient coupling between the system and its environment. A stray photon will do it. Consciousness has nothing to do with it.
 
-This structure — multiple layers, each with its own period, sharing a substrate, recurring at the least common multiple — is the same structure that appears in coupled driven oscillators in physics. **The mathematical correspondence here is strict** in the limited sense that lcm-recurrence governs both. It is an arithmetic fact, not a metaphor.
+This correction is, for the installation, a feature rather than a problem. The visitor is not metaphorically observing the work; they are physically interacting with it. Sensors register their presence, their data perturbs the simulation, and the simulation's trajectory changes accordingly. The visitor is, in the literal sense the physics requires, *part of the measurement*. The poetic framing — that the music exists in superposition until the visitor enters — is a true description of the system from the visitor's perspective, even though it is not a description of quantum mechanics in the technical sense.
 
-What time-crystal dynamics add to this picture, beyond the bare arithmetic, is the **rigidity** described in §2.2. Two metronomes set to periods 13 and 9 will recur at 117 pulses, but they will also drift if perturbed, and they cannot interact: each metronome is indifferent to the other. Two coupled time-crystal layers can interact through their shared substrate, and the rigidity of each layer's period is what allows interaction *without* loss of identity. This is the technically distinctive musical property: **layers that influence each other while keeping their own time.**
+The deeper structural reason for reaching toward physics is that music, at its base, is already a wave phenomenon. A note is a wavelength. A chord is a superposition of wavelengths. Constructive and destructive interference, resonance, beating, harmonic series — these are not analogies between music and physics; they are the same phenomena, named differently in different fields. The question this installation began with was whether the physics could be pushed further: not just the wave physics of sound itself, but the dynamics of a *system* that produces those waves.
+
+The specific entry point — time crystals — emerged from a compositional concern rather than a theoretical one. The author writes music without strict downbeats and without uniform time signatures, in polymetric layers whose interaction produces complex but musical rhythm. Discovering that driven many-body systems naturally produce sub-harmonic responses (f/2, f/3, …), with periods determined by the system rather than imposed externally, was a recognition rather than a hypothesis: this is how the music already works. The substrate was found, not chosen.
 
 ---
 
-## 4. Toward a Substrate
+## 3. The Technical Substrate
 
-### 4.1 The Minimum Viable Substrate
+This section describes the simulation in classical physical terms. The artistic claims of §2 do not depend on the simulation being a faithful reproduction of a real quantum time crystal; they depend on the simulation having the *dynamical properties* that the time-crystal phase exhibits. Those properties — period-multiplication, rigidity, and phase-discreteness — can be reproduced classically, and the existing prototype does so.
 
-The simplest substrate that exhibits the relevant dynamics is a **disordered, periodically driven, classical or quantum spin chain** — the system already present in the example artifact. Each site carries a spin; sites interact with their neighbors; an external drive applies a near-π pulse at fixed intervals; disorder in the local fields stabilizes the period-doubled phase against thermalization.
+### 3.1 Driven Systems and Period-Multiplication
 
-This system is not a metaphor for a time crystal. In the prethermal regime, with the right parameters, *it is one*. The period-doubling is real, the rigidity is real, and the phase boundary is real and observable in the simulation. The artifact in the repository demonstrates all three.
+A driven system is one acted on by a periodic external force at frequency *F*. Most driven systems respond at *F*. A discrete time crystal is a driven many-body system that, despite being kicked at *F*, settles into a steady state oscillating at *F/n* for some integer *n* > 1. The drive period is *T*; the system's period is *nT*.
 
-For a generative music framework, the chain is also attractive because it scales naturally to multiple voices. A single chain produces one rhythmic layer. Multiple chains, weakly coupled through a shared field or shared pulse, produce multiple layers whose periods are determined independently but whose interaction is mediated. This is the polyrhythmic architecture from §3, but with the periods chosen by the substrate rather than by the composer.
+Three properties of this behavior are central to the installation:
 
-### 4.2 The Measurement-to-Music Mapping
+The integer *n* is **determined by interactions**, not by the drive. Different couplings, disorder profiles, and initial conditions land the system in *n = 2*, *n = 3*, or higher. The composer does not choose *n*; the substrate does.
 
-A simulated spin chain is not music until something is read out of it and turned into sound. **This mapping is the actual compositional act of the framework**, and it deserves more attention than it receives in most discussions of physics-based music generation.
+Once the system locks into period *nT*, that period is **rigid**. Small changes to the drive — imperfect pulses, parameter drift, thermal noise — do not break the lock. The system absorbs the perturbation and continues at *nT*. This is what physicists mean by saying a time crystal is a *phase* of matter: it has the stability of ice rather than of a balanced pencil.
+
+Outside the time-crystal phase, the system either responds at the drive frequency (trivial) or thermalizes into noise. The transition between regimes is **sharp**. There is no smooth gradient between "locked at 2T" and "locked at 3T" — the system is in one phase or the other.
+
+### 3.2 Why These Properties Matter for the Installation
+
+Each of the three properties above corresponds to something the installation needs:
+
+A groove that **self-corrects**. The visitor's presence is a perturbation. If the substrate were not rigid, every movement would knock the music off its rhythm and the experience would be chaotic. Because the substrate is rigid, the rhythm holds — the visitor influences the music without destroying it. This is the property that makes interaction musically tolerable.
+
+A period that is **discovered, not assigned**. The simulation is told only the drive period and the interaction structure. The musical period emerges. This means the rhythmic content of the piece is genuinely produced by the system rather than scripted, and the visitor's perturbations can shift the system between different emergent periods rather than between authored states.
+
+**Phase transitions** as macro-form. The installation has a vocabulary of structural shifts — locking, melting, re-crystallizing — corresponding to recognizable musical gestures (a groove establishing, dissolving, re-forming). These are not scripted events. They are the simulation crossing a phase boundary, which it does in response to its parameters, which respond in turn to the visitor.
+
+### 3.3 Polyrhythm as Coupled Sub-Harmonics
+
+Certain musical traditions — Meshuggah, Tigran Hamasyan, Carnatic konnakol, Hindustani tala — construct rhythm as independent periodic layers sharing a common pulse rather than as nested subdivisions of a uniform meter. A composition might run a layer of period 13 against a layer of period 9 over a shared underlying tick. The full system returns to its starting configuration after lcm(13, 9) = 117 pulses; because gcd(13, 9) = 1, that recurrence is maximally delayed. This is why these traditions reach for prime or coprime groupings, and why the moment of recurrence registers to the ear as inevitable rather than designed.
+
+Two metronomes set to periods 13 and 9 will produce the same arithmetic recurrence, but they will drift if perturbed and they cannot interact: each is indifferent to the other. The distinctive musical contribution of a time-crystal substrate is that **multiple coupled chains can lock at different *n* and influence each other through their shared substrate without losing their individual periods**. This is the polyrhythmic architecture made physical: layers that interact while keeping their own time. It is the technical reason the substrate fits the music, beyond the bare arithmetic of lcm-recurrence.
+
+### 3.4 The Minimum Viable Substrate
+
+The simplest system that exhibits the relevant dynamics is a disordered, periodically driven, classical spin chain — the system already running in the prototype. Each site carries a spin; sites interact with their neighbors; an external drive applies a near-π pulse at fixed intervals; disorder in the local fields stabilizes the period-doubled phase against thermalization.
+
+For a single rhythmic layer, one chain suffices. For polyrhythmic structure, multiple chains weakly coupled through a shared field or shared pulse give independent layers whose periods are determined separately but whose interactions are mediated. This is the architecture §3.3 describes, instantiated.
+
+The author retains the right to take liberties with the physics where the music or the installation demands it, provided the substrate retains the three properties of §3.1. Faithfulness to the published time-crystal literature is not the goal. Faithfulness to the dynamics that make the substrate musically right is.
+
+---
+
+## 4. The Measurement-to-Music Mapping
+
+A simulated spin chain is not music until something is read out of it and turned into sound. **This mapping is the actual compositional act of the framework**, and it deserves more attention than physics-based generative systems typically give it.
 
 A non-exhaustive list of observables and the musical decisions they encode:
 
-The **z-component of each spin** is a continuous signal between −1 and +1 that flips sign with the period of the crystal. Reading zero-crossings as note events (the choice in the example artifact) gives a sparse, percussive sonification where each site is a voice firing at its own sub-harmonic. This is rhythm-first.
+The **z-component of each spin** is a continuous signal between −1 and +1 that flips sign with the period of the crystal. Reading zero-crossings as note events (the choice in the prototype) gives a sparse, percussive sonification where each site is a voice firing at its own sub-harmonic. This is rhythm-first.
 
 **Total magnetization** ⟨M(t)⟩ is a single global signal oscillating at the dominant period of the system. Mapping it to pitch or amplitude gives a single melodic or dynamic line representing the macro-state of the chain. This is form-first.
 
-**Domain walls** — boundaries between regions of opposite spin — are localized, mobile structures whose motion can be tracked. Each domain wall is a point-like object with a position and a velocity; sonifying their trajectories gives a third class of voices that exist only when the chain is in a partially ordered configuration. This is texture-first.
+**Domain walls** — boundaries between regions of opposite spin — are localized, mobile structures whose motion can be tracked. Each domain wall is a point-like object with a position and a velocity; sonifying their trajectories gives a class of voices that exist only when the chain is partially ordered. This is texture-first.
 
 **Spin-spin correlations** between distant sites encode the long-range structure of the phase. In the time-crystal regime these correlations are large; in the thermal regime they collapse to zero. Mapping correlation strength to a global parameter (filter cutoff, reverb mix, harmonic density) gives the phase transition itself an audible signature. This is environment-first.
 
-The framework should not commit to one mapping. The mapping is a *choice*, and different choices yield different music from the same physics. Treating the mapping space as a first-class compositional variable — alongside the substrate parameters — is the part of the project that most resembles traditional composition.
-
-### 4.3 Listener Interaction Without Quantum Mysticism
-
-Earlier drafts framed listener input as wavefunction collapse. That framing imports philosophical baggage the framework does not need. A more honest description: **listener data biases the parameters of the substrate in real time.**
-
-Concretely, listener presence, movement, biometrics, or position can modulate the drive imperfection ε, the interaction strength *J*, the disorder width *W*, or the temperature *kT* — the four parameters in the existing simulation. Small changes in these parameters can move the system across phase boundaries, change the period from 2T to 3T, or push it into and out of the time-crystal regime entirely. The listener does not collapse a superposition; the listener perturbs a dynamical system, and the system's response is determined by its physics.
-
-This is interactive enough to be musically meaningful — the music genuinely changes in response to the audience — without claiming anything about consciousness or measurement. It also generalizes cleanly to multiple listeners: each contributes a perturbation, the system integrates them, and the resulting trajectory is shared. No interference-of-observers metaphysics required.
+The framework should not commit to a single mapping. The mapping is a *choice*, and different choices yield different music from the same physics. Treating the mapping space as a first-class compositional variable — alongside the substrate parameters and the visitor-interaction model — is the part of the project that most resembles traditional composition.
 
 ---
 
-## 5. What This Framework Is and Is Not
+## 5. The Visitor as Part of the System
 
-It **is** a proposal to use simulated driven many-body dynamics as a generative substrate, where rhythmic structure emerges from period-multiplication, polyrhythmic interaction emerges from coupled chains, and macro-form emerges from phase transitions. It is a claim that this substrate produces musical behaviors — self-correcting grooves, emergent periods, discrete structural shifts — that are difficult to obtain from rule-based or stochastic generative systems, and that the physics literature has already done the hard work of characterizing those behaviors rigorously.
+The visitor's role in the installation is described in §1 in experiential terms and in §2 in conceptual terms. This section describes it in technical terms, to make explicit that the experiential and conceptual claims rest on actual implementation choices.
 
-It **is not** a claim that music is physics, that listeners are quantum observers, or that the full machinery of quantum mechanics applies. The Fourier-uncertainty relationship between pitch precision and time precision is real and worth using, but it is signal processing, not quantum mechanics. Constraint propagation between musical voices is a useful architecture, but it is constraint satisfaction, not entanglement. Where classical descriptions suffice, this draft uses them.
+The visitor's measured state — position, movement, biometrics — is mapped onto the parameters of the substrate in real time. The four parameters exposed by the existing prototype are the relevant ones: the drive imperfection ε, the interaction strength *J*, the disorder width *W*, and the effective temperature *kT*. Each of these has a known effect on the system's dynamics. Increasing *kT* pushes the system toward the thermal phase. Decreasing ε strengthens the period-2T lock. Changing *J* and *W* shifts the boundary between phases.
+
+The visitor, in other words, is operating four knobs without knowing they are doing so. They cannot turn the system into anything they want — the physics permits a finite set of behaviors and forbids the rest — but within that set they have real influence. The question of *how much* influence, and *how legibly*, is the central design question of the installation. Too tight a coupling and the piece becomes a theremin: every movement registers, the substrate's autonomy disappears, the visitor learns the rules in seconds and the piece collapses into demonstration. Too loose and the visitor never discovers that they matter at all. The right setting is somewhere visitors find the relationship through curiosity rather than instruction, and where the substrate retains enough of its own life that discovery never reduces it to a controller.
+
+This is also where multiple visitors become structurally interesting. Each contributes a perturbation; the perturbations sum into the parameter space; the substrate's response is determined by its physics. Two visitors can push the system into phase regions that neither could reach alone — not because the installation contains an authored "two-person mode" but because the parameter sums land in a different region of the phase diagram. A piece that one visitor experiences as locked and rhythmic might melt into something else when a second visitor enters. This is a property of coupled many-body systems, not a feature added to the installation.
 
 ---
 
-## 6. Next Steps
+## 6. What This Framework Is and Is Not
+
+It **is** an audiovisual installation in which a simulated driven many-body system generates music and image in real time, in which visitors perturb the system through their physical presence and measured state, and in which the dynamics of period-multiplication, rigidity, and phase transitions correspond to musical behaviors the author has been pursuing through composition independently of physics.
+
+It **is** a use of quantum-mechanical vocabulary — observer, superposition, collapse — in the registers where it earns its place: as the most economical description of what the visitor experiences, and as honest acknowledgement that the artistic premise grew from engagement with the conceptual structure of the field.
+
+It **is not** a claim that music is quantum mechanical, that the simulation is a faithful reproduction of a real time crystal, or that the visitor's consciousness has any special role in the system's dynamics. The visitor's *presence* matters, in a literal physical sense; their consciousness, in the technical sense the physics requires, does not.
+
+Where classical descriptions suffice for the technical layer, this draft uses them. Where quantum-mechanical language is the right description of the experiential layer, this draft uses it. The two layers are kept distinct, and the relationship between them is one of correspondence, not identity.
+
+---
+
+## 7. Next Steps
 
 Three concrete priorities, in order:
 
-**Characterize the existing substrate.** The classical spin chain in the example artifact already exhibits period-doubling, rigidity, and a thermal phase. Map its parameter space: which (ε, *J*, *W*, *kT*) combinations produce stable 2T, which produce higher-order *nT*, which thermalize. This is a few hours of parameter sweeps and gives the framework an empirical floor.
+**Characterize the existing substrate.** The classical spin chain in the prototype already exhibits period-doubling, rigidity, and a thermal phase. Map its parameter space: which (ε, *J*, *W*, *kT*) combinations produce stable 2T, which produce higher-order *nT*, which thermalize. This is a few hours of parameter sweeps and gives the framework an empirical floor for the visitor-interaction design of §5.
 
-**Build a second chain and couple them.** The minimum interesting polyrhythmic system is two chains with different disorder profiles, weakly coupled through a shared pulse or shared field. Verify that the two chains can lock at different *n* and that the lcm of their periods governs the recurrence of the joint state. If this works, the polyrhythmic claim of §3 is no longer hypothetical.
+**Build a second chain and couple them.** The minimum interesting polyrhythmic system is two chains with different disorder profiles, weakly coupled through a shared pulse or shared field. Verify that the chains can lock at different *n* and that the lcm of their periods governs joint recurrence. If this works, §3.3 is no longer hypothetical.
 
-**Pick one measurement-to-music mapping and commit to it for an extended piece.** Zero-crossings on the existing single chain is the obvious candidate. Compose with it — meaning, sweep parameters intentionally over five to ten minutes — and listen. The point of this step is to discover what the substrate actually wants to do musically, before deciding what we want it to do.
+**Pick one measurement-to-music mapping and commit to it for an extended piece.** Zero-crossings on the existing single chain is the obvious candidate. Compose with it — meaning, sweep parameters intentionally over five to ten minutes — and listen. The point of this step is to discover what the substrate actually wants to do musically, before making decisions about what we want it to do. Everything about the installation downstream — the pillar, the visual language, the sensor mapping, the room itself — is easier to design once the substrate's musical character is known by ear rather than by argument.
 
-After these three, the question of which further pieces of quantum mechanics (if any) earn a place in the framework can be revisited from a position of empirical evidence rather than from analogy.
+After these three, the architecture of the installation can be designed against an empirically grounded substrate rather than against a hypothetical one.
 
 ---
 
-*— Draft 0.2 | Research in Progress*
+*— Draft 0.3 | Research in Progress*
