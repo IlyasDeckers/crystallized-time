@@ -18,7 +18,7 @@ These are early-stage research notes for a work in progress.
 
 ## 1. The Installation
 
-A visitor enters a room. At its center stands a pillar. Sound fills the space; light moves on and around the pillar. Both are being generated in real time by a physical simulation running in the substrate of the installation. Nothing is pre-recorded, nothing is looped, and nothing repeats — though patterns lock and hold for as long as the conditions that produced them persist.
+A visitor enters a room. At its center stands a pillar. Sound fills the space; visuals are projected in 360 degrees. Both are being generated in real time by a physical simulation running in the substrate of the installation. Nothing is pre-recorded, nothing is looped, and nothing repeats — though patterns lock and hold for as long as the conditions that produced them persist.
 
 The visitor's presence is registered: their position in the room, their movement, and — depending on the version of the installation — biometric signals such as heart rate or galvanic response. These measurements feed into the parameters of the simulation. The system the visitor is hearing and seeing is not a system that exists independently of them. It is a system whose trajectory is being shaped, in real time, by the fact that they are in the room.
 
