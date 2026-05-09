@@ -1,0 +1,81 @@
+//! Zero-crossing detection on sigma_z, producing GateEvents.
+//!
+//! Stateful: tracks previous sz values and last-event ticks per output site
+//! so it can debounce and detect signed crossings rather than raw threshold passes.
+
+use crate::chain::SpinChain;
+use crate::config::EventConfig;
+
+/// A single gate-trigger event emitted by the substrate.
+#[derive(Clone, Copy, Debug)]
+pub struct GateEvent {
+    /// Index of the site that fired (into the chain, not into output_sites).
+    pub site: usize,
+    /// Tick at which the event occurred.
+    pub tick: u64,
+    /// Strength of the crossing, in [0, 1].
+    pub intensity: f32,
+}
+
+/// Watches a chain and emits GateEvents on zero-crossings of sigma_z.
+pub struct EventDetector {
+    pub config: EventConfig,
+    /// prev_sz[k] is the previous z-component for output_sites[k].
+    prev_sz: Vec<f64>,
+    /// last_event_tick[k] is the tick of the last emission for output_sites[k].
+    last_event_tick: Vec<u64>,
+}
+
+impl EventDetector {
+    /// Build a detector. Initial prev_sz values come from the chain's current state
+    /// so the first step doesn't spuriously fire.
+    pub fn new(config: EventConfig, chain: &SpinChain) -> Self {
+        let prev_sz: Vec<f64> = config
+            .output_sites
+            .iter()
+            .map(|&i| chain.sz(i))
+            .collect();
+
+        let last_event_tick: Vec<u64> = vec![0; config.output_sites.len()];
+
+        Self {
+            config,
+            prev_sz,
+            last_event_tick,
+        }
+    }
+
+    /// Inspect the chain's current state and return any events that fired this tick.
+    pub fn check(&mut self, chain: &SpinChain) -> Vec<GateEvent> {
+        let mut events = Vec::new();
+
+        for (k, &site) in self.config.output_sites.iter().enumerate() {
+            let current_sz = chain.sz(site);
+            let prev = self.prev_sz[k];
+            let threshold = self.config.crossing_threshold;
+
+            // Signed zero-crossing: previous and current must be on opposite sides
+            // of the threshold band, not just both within it.
+            let crossed_up = prev < -threshold && current_sz > threshold;
+            let crossed_down = prev > threshold && current_sz < -threshold;
+            let crossed = crossed_up || crossed_down;
+
+            let since_last = chain.tick.saturating_sub(self.last_event_tick[k]);
+            let debounced = since_last > self.config.debounce_ticks;
+
+            if crossed && debounced {
+                let intensity = ((current_sz - prev).abs() as f32).min(1.0);
+                events.push(GateEvent {
+                    site,
+                    tick: chain.tick,
+                    intensity,
+                });
+                self.last_event_tick[k] = chain.tick;
+            }
+
+            self.prev_sz[k] = current_sz;
+        }
+
+        events
+    }
+}
