@@ -5,10 +5,13 @@ mod chain;
 mod config;
 mod events;
 mod midi;
+mod scheduler;
 
 use clap::Parser;
 use config::{Config, TempoConfig};
 use rand::SeedableRng;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Parser, Debug)]
 #[command(name = "crystallized_time", version, about)]
@@ -59,6 +62,12 @@ fn main() {
         return;
     }
 
+    let running = Arc::new(AtomicBool::new(true));
+    let running_handler = Arc::clone(&running);
+    ctrlc::set_handler(move || {
+        running_handler.store(false, Ordering::Release);
+    }).expect("failed to install Ctrl-C handler");
+
     let midi_sender = match midi::MidiSender::open(cli.port, config.midi.clone()) {
         Ok(sender) => sender,
         Err(e) => {
@@ -84,10 +93,14 @@ fn main() {
 
     let total_ticks = 200 * config.physics.ticks_per_period as u64;
     for tick in 1..=total_ticks {
+        if !running.load(Ordering::Acquire) {
+            break;
+        }
+
         chain.step(&mut rng);
         let events = detector.check(&chain);
         for event in events {
-            let channel = config.midi.base_channel + event.site as u8;
+            let channel = config.midi.base_channel + event.voice;
             println!("{:5}  {:4}  {:7}  {:.2}",
                      event.tick, event.site, channel + 1, event.intensity);
             midi_sender.send_gate(event);
@@ -101,6 +114,13 @@ fn main() {
         }
     }
 
-    println!("\nDone. Letting note-offs flush...");
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    println!("\nShutting down cleanly...");
+    midi_sender.shutdown();
+    // Give the scheduler's worker thread a moment to drain any pending
+    // note-offs before MidiSender drops (which will join the worker anyway,
+    // but the worker fires remaining messages on the way out — this small
+    // pause lets normal-deadline note-offs fire at their proper times).
+    std::thread::sleep(std::time::Duration::from_millis(
+        config.midi.gate_length_ms + 50
+    ));
 }

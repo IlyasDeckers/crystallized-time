@@ -11,6 +11,9 @@ use crate::config::EventConfig;
 pub struct GateEvent {
     /// Index of the site that fired (into the chain, not into output_sites).
     pub site: usize,
+    /// Position of this site in output_sites — the "voice index".
+    /// Determines the MIDI channel offset.
+    pub voice: u8,
     /// Tick at which the event occurred.
     pub tick: u64,
     /// Strength of the crossing, in [0, 1].
@@ -67,6 +70,7 @@ impl EventDetector {
                 let intensity = ((current_sz - prev).abs() as f32).min(1.0);
                 events.push(GateEvent {
                     site,
+                    voice: k as u8,
                     tick: chain.tick,
                     intensity,
                 });

@@ -7,16 +7,17 @@
 
 use crate::config::MidiConfig;
 use crate::events::GateEvent;
-use midir::{MidiOutput, MidiOutputConnection};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use midir::MidiOutput;
+use std::time::{Duration, Instant};
+use crate::scheduler::NoteOffScheduler;
+use std::collections::HashSet;
+use std::sync::Mutex;
 
 /// MIDI sender. Owns a connection to a single output port.
 pub struct MidiSender {
     config: MidiConfig,
-    /// Wrapped in Arc<Mutex<_>> so background threads can write note-offs safely.
-    conn: Arc<Mutex<MidiOutputConnection>>,
+    scheduler: NoteOffScheduler,
+    used_channels: Mutex<HashSet<u8>>,
 }
 
 impl MidiSender {
@@ -47,17 +48,22 @@ impl MidiSender {
 
         Ok(Self {
             config,
-            conn: Arc::new(Mutex::new(conn)),
+            scheduler: NoteOffScheduler::new(conn),
+            used_channels: Mutex::new(HashSet::new()),
         })
     }
 
     /// Send a gate: note-on now, note-off scheduled after gate_length_ms.
     pub fn send_gate(&self, event: GateEvent) {
-        let channel = self.config.base_channel + event.site as u8;
+        let channel = self.config.base_channel + event.voice;
         if channel > 15 {
-            eprintln!("warning: site {} maps to MIDI channel {} (> 15), skipping",
-                      event.site, channel + 1);
+            eprintln!("warning: voice {} maps to MIDI channel {} (> 15), skipping",
+                      event.voice, channel + 1);
             return;
+        }
+
+        if let Ok(mut used) = self.used_channels.lock() {
+            used.insert(channel);
         }
 
         let pitch = self.config.pitch;
@@ -66,24 +72,27 @@ impl MidiSender {
         let note_on  = [0x90 | channel, pitch, velocity];
         let note_off = [0x80 | channel, pitch, 0];
 
-        if let Ok(mut conn) = self.conn.lock() {
-            if let Err(e) = conn.send(&note_on) {
-                eprintln!("MIDI send (note-on) failed: {}", e);
-                return;
-            }
-        } else {
-            eprintln!("MIDI mutex poisoned, dropping event");
-            return;
+        self.scheduler.send_now(note_on);
+        let fire_at = Instant::now() + Duration::from_millis(self.config.gate_length_ms);
+        self.scheduler.schedule(fire_at, note_off);
+    }
+
+    /// Send "All Notes Off" and "All Sound Off" on every channel used during
+    /// the run. Belt-and-braces: catches any notes that downstream gear thinks
+    /// are still on, regardless of whether we sent the note-off ourselves.
+    pub fn shutdown(&self) {
+        let channels: Vec<u8> = match self.used_channels.lock() {
+            Ok(used) => used.iter().copied().collect(),
+            Err(_) => return,
+        };
+
+        for channel in channels {
+            // CC 123 = All Notes Off, CC 120 = All Sound Off.
+            // Status byte 0xB0 is Control Change; OR with channel for the channel.
+            let all_notes_off = [0xB0 | channel, 123, 0];
+            let all_sound_off = [0xB0 | channel, 120, 0];
+            self.scheduler.send_now(all_notes_off);
+            self.scheduler.send_now(all_sound_off);
         }
-
-        let conn_for_off = Arc::clone(&self.conn);
-        let gate_length = Duration::from_millis(self.config.gate_length_ms);
-
-        thread::spawn(move || {
-            thread::sleep(gate_length);
-            if let Ok(mut conn) = conn_for_off.lock() {
-                let _ = conn.send(&note_off);
-            }
-        });
     }
 }
