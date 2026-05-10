@@ -31,6 +31,11 @@ struct Cli {
     /// RNG seed for the substrate.
     #[arg(long, default_value_t = 47)]
     seed: u64,
+
+    /// Output mapping. one-channel-per-chain (default) sends one voice per chain;
+    /// channel-per-site sends each voice to its own channel.
+    #[arg(long, value_enum, default_value_t = config::OutputMode::OneChannelPerChain)]
+    mode: config::OutputMode,
 }
 
 fn main() {
@@ -39,6 +44,10 @@ fn main() {
     let config = Config {
         tempo: TempoConfig::from_bpm(cli.bpm),
         seed: cli.seed,
+        midi: config::MidiConfig {
+            mode: cli.mode,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

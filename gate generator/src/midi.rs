@@ -5,7 +5,7 @@
 //! for short fixed gate lengths; for variable or long gates we'd switch to a
 //! priority queue of pending note-offs serviced by the loop.
 
-use crate::config::MidiConfig;
+use crate::config::{MidiConfig, OutputMode};
 use crate::events::GateEvent;
 use midir::MidiOutput;
 use std::time::{Duration, Instant};
@@ -18,6 +18,9 @@ pub struct MidiSender {
     config: MidiConfig,
     scheduler: NoteOffScheduler,
     used_channels: Mutex<HashSet<u8>>,
+    /// For mono priority: currently-sounding pitch on each channel, if any.
+    /// Indexed by channel (0..16). None if nothing is sounding.
+    sounding: Mutex<[Option<u8>; 16]>,
 }
 
 impl MidiSender {
@@ -50,12 +53,28 @@ impl MidiSender {
             config,
             scheduler: NoteOffScheduler::new(conn),
             used_channels: Mutex::new(HashSet::new()),
+            sounding: Mutex::new([None; 16]),
         })
     }
 
     /// Send a gate: note-on now, note-off scheduled after gate_length_ms.
+    /// Send a gate. Routing depends on `config.mode`.
     pub fn send_gate(&self, event: GateEvent) {
-        let channel = self.config.base_channel + event.voice;
+        let (channel, pitch) = match self.config.mode {
+            OutputMode::OneChannelPerChain => {
+                let pitch = self.config
+                    .voice_pitches
+                    .get(event.voice as usize)
+                    .copied()
+                    .unwrap_or(self.config.pitch);
+                (self.config.base_channel, pitch)
+            }
+            OutputMode::ChannelPerSite => {
+                let channel = self.config.base_channel + event.voice;
+                (channel, self.config.pitch)
+            }
+        };
+
         if channel > 15 {
             eprintln!("warning: voice {} maps to MIDI channel {} (> 15), skipping",
                       event.voice, channel + 1);
@@ -66,8 +85,20 @@ impl MidiSender {
             used.insert(channel);
         }
 
-        let pitch = self.config.pitch;
         let velocity = (event.intensity * 127.0).clamp(1.0, 127.0) as u8;
+
+        // Mono priority for Mode A: if a note is currently sounding on this
+        // channel, send its note-off before the new note-on. In Mode B each
+        // channel has only one voice, so no prior note will be sounding.
+        if self.config.mode == OutputMode::OneChannelPerChain {
+            if let Ok(mut sounding) = self.sounding.lock() {
+                if let Some(prior_pitch) = sounding[channel as usize].take() {
+                    let prior_off = [0x80 | channel, prior_pitch, 0];
+                    self.scheduler.send_now(prior_off);
+                }
+                sounding[channel as usize] = Some(pitch);
+            }
+        }
 
         let note_on  = [0x90 | channel, pitch, velocity];
         let note_off = [0x80 | channel, pitch, 0];

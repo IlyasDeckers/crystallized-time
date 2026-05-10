@@ -27,12 +27,25 @@ impl Default for PhysicsConfig {
         Self {
             n_sites: 8,
             dt: 0.04,
-            eps: 0.05,
+            eps: 0.01,
             j: 1.2,
             w: 2.0,
-            kt: 0.05,
+            kt: 0.1,
             ticks_per_period: 25,
         }
+    }
+}
+
+/// Output topology — how voices are routed to MIDI channels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum OutputMode {
+    OneChannelPerChain,
+    ChannelPerSite,
+}
+
+impl Default for OutputMode {
+    fn default() -> Self {
+        OutputMode::OneChannelPerChain
     }
 }
 
@@ -60,20 +73,30 @@ impl Default for EventConfig {
 /// MIDI output parameters.
 #[derive(Clone, Debug)]
 pub struct MidiConfig {
-    /// MIDI note pitch sent on every gate (irrelevant for pure gates).
+    /// MIDI note pitch for ChannelPerSite mode (where pitch is irrelevant — gate signals).
     pub pitch: u8,
+    /// Per-voice MIDI pitches for OneChannelPerChain mode.
+    /// Length must match the number of output sites.
+    /// Default: Cmaj7 voicing (C3, E3, G3, B3).
+    pub voice_pitches: Vec<u8>,
     /// Gate length in milliseconds (note-on to note-off delay).
     pub gate_length_ms: u64,
-    /// Base MIDI channel (0-15). Site i goes to base_channel + i.
+    /// Base MIDI channel (0-15).
+    /// In OneChannelPerChain: chain's channel.
+    /// In ChannelPerSite: voice 0's channel; voice k goes to base_channel + k.
     pub base_channel: u8,
+    /// Output topology.
+    pub mode: OutputMode,
 }
 
 impl Default for MidiConfig {
     fn default() -> Self {
         Self {
-            pitch: 48, // C3
+            pitch: 48,
+            voice_pitches: vec![48, 52, 55, 59], // C3, E3, G3, B3 — Cmaj7
             gate_length_ms: 50,
             base_channel: 0,
+            mode: OutputMode::default(),
         }
     }
 }
