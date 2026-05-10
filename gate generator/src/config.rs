@@ -158,6 +158,57 @@ impl Default for TempoConfig {
     }
 }
 
+/// Domain-wall detection parameters.
+#[derive(Clone, Debug)]
+pub struct WallConfig {
+    /// Whether wall detection is active.
+    pub enabled: bool,
+    /// Greedy match radius in position units (Step 3 uses this).
+    pub match_radius: f64,
+    /// Minimum position change to fire a Moved event (Step 3 uses this).
+    pub move_threshold: f64,
+    /// Interpolate wall position from sz magnitudes (Step 4 uses this).
+    pub interpolate_position: bool,
+}
+
+/// Domain-wall MIDI output parameters.
+#[derive(Clone, Debug)]
+pub struct WallMidiConfig {
+    pub channel_low: u8,
+    pub channel_high: u8,
+    pub pitch_low: u8,
+    pub pitch_high: u8,
+    pub motion_cc: Option<u8>,
+    /// When true, wall motion produces new note-on/note-off pairs as the
+    /// pitch changes (gate-and-CV-friendly). When false, pitch is set at
+    /// note-on and held; motion is sent via `motion_cc`.
+    pub repitch_on_move: bool,
+}
+
+impl Default for WallMidiConfig {
+    fn default() -> Self {
+        Self {
+            channel_low: 4,
+            channel_high: 7,
+            pitch_low: 36,
+            pitch_high: 60,
+            motion_cc: Some(1),
+            repitch_on_move: false,
+        }
+    }
+}
+
+impl Default for WallConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            match_radius: 1.0,
+            move_threshold: 0.1,
+            interpolate_position: true,
+        }
+    }
+}
+
 /// All configuration combined.
 #[derive(Clone, Debug, Default)]
 pub struct Config {
@@ -166,5 +217,7 @@ pub struct Config {
     pub midi: MidiConfig,
     pub tempo: TempoConfig,
     pub clock: ClockConfig,
+    pub walls: WallConfig,
+    pub wall_midi: WallMidiConfig,
     pub seed: u64,
 }
