@@ -99,7 +99,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let _ = midi_sender; // suppress unused warning until we wire up send_gate
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(config.seed);
     let mut chain = chain::SpinChain::new(config.physics.clone(), &mut rng);
