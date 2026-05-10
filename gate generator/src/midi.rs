@@ -108,6 +108,25 @@ impl MidiSender {
         self.scheduler.schedule(fire_at, note_off);
     }
 
+    /// Send a clock-style gate pulse on a specific channel. Used by the
+    /// substrate clock; not subject to mode routing or mono-priority logic.
+    pub fn send_clock_pulse(&self, channel: u8, pitch: u8, gate_length_ms: u64) {
+        if channel > 15 {
+            return;
+        }
+
+        if let Ok(mut used) = self.used_channels.lock() {
+            used.insert(channel);
+        }
+
+        let note_on  = [0x90 | channel, pitch & 0x7F, 100];
+        let note_off = [0x80 | channel, pitch & 0x7F, 0];
+
+        self.scheduler.send_now(note_on);
+        let fire_at = Instant::now() + Duration::from_millis(gate_length_ms);
+        self.scheduler.schedule(fire_at, note_off);
+    }
+
     /// Send "All Notes Off" and "All Sound Off" on every channel used during
     /// the run. Belt-and-braces: catches any notes that downstream gear thinks
     /// are still on, regardless of whether we sent the note-off ourselves.

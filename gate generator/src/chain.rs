@@ -161,4 +161,14 @@ impl SpinChain {
     pub fn sz(&self, i: usize) -> f64 {
         self.spins[i][2]
     }
+
+    /// Mean sigma_z across all sites. Range [-1, 1].
+    /// In the time-crystal phase this flips sign every drive period.
+    pub fn global_magnetization(&self) -> f64 {
+        if self.spins.is_empty() {
+            return 0.0;
+        }
+        let sum: f64 = self.spins.iter().map(|s| s[2]).sum();
+        sum / self.spins.len() as f64
+    }
 }

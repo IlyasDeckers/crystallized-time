@@ -6,6 +6,7 @@ mod config;
 mod events;
 mod midi;
 mod scheduler;
+mod clock;
 
 use clap::Parser;
 use config::{Config, TempoConfig};
@@ -36,6 +37,14 @@ struct Cli {
     /// channel-per-site sends each voice to its own channel.
     #[arg(long, value_enum, default_value_t = config::OutputMode::OneChannelPerChain)]
     mode: config::OutputMode,
+
+    /// MIDI channel for the substrate clock (1..16).
+    #[arg(long, default_value_t = 16)]
+    clock_channel: u8,
+
+    /// Disable the substrate clock output.
+    #[arg(long)]
+    no_clock: bool,
 }
 
 fn main() {
@@ -46,6 +55,12 @@ fn main() {
         seed: cli.seed,
         midi: config::MidiConfig {
             mode: cli.mode,
+            ..Default::default()
+        },
+        clock: config::ClockConfig {
+            enabled: !cli.no_clock,
+            // CLI is 1-based, internal is 0-based.
+            channel: cli.clock_channel.saturating_sub(1).min(15),
             ..Default::default()
         },
         ..Default::default()
@@ -88,8 +103,8 @@ fn main() {
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(config.seed);
     let mut chain = chain::SpinChain::new(config.physics.clone(), &mut rng);
-
     let mut detector = events::EventDetector::new(config.events.clone(), &chain);
+    let mut clock_emitter = clock::ClockEmitter::new(config.clock.clone(), &chain);
 
     println!();
     println!("Running for 200 drive periods, sending MIDI gates...");
@@ -110,9 +125,11 @@ fn main() {
         let events = detector.check(&chain);
         for event in events {
             let channel = config.midi.base_channel + event.voice;
-            println!("{:5}  {:4}  {:7}  {:.2}",
-                     event.tick, event.site, channel + 1, event.intensity);
+            // println!("{:5}  {:4}  {:7}  {:.2}",
+            //          event.tick, event.site, channel + 1, event.intensity);
             midi_sender.send_gate(event);
+
+            clock_emitter.tick(&chain, &midi_sender);
         }
 
         // Pace to wall-clock.
