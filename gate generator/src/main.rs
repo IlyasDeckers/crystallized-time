@@ -125,12 +125,12 @@ fn main() {
         let events = detector.check(&chain);
         for event in events {
             let channel = config.midi.base_channel + event.voice;
-            // println!("{:5}  {:4}  {:7}  {:.2}",
-            //          event.tick, event.site, channel + 1, event.intensity);
+            println!("{:5}  {:4}  {:7}  {:.2}",
+                     event.tick, event.site, channel + 1, event.intensity);
             midi_sender.send_gate(event);
-
-            clock_emitter.tick(&chain, &midi_sender);
         }
+
+        clock_emitter.tick(&chain, &midi_sender);
 
         // Pace to wall-clock.
         let target = start + tick_duration * tick as u32;
