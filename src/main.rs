@@ -264,20 +264,24 @@ fn main() {
         let wall_events = wall_detector.check(&chain);
         for event in &wall_events {
             // Print for visibility; safe to remove later.
-            match event {
-                walls::WallEvent::Created { id, position, tick } => {
-                    println!("tick {:5}  wall {:3} CREATED  at {:.2}", tick, id, position);
-                }
-                walls::WallEvent::Destroyed { id, last_position, tick, lifetime_ticks } => {
-                    println!("tick {:5}  wall {:3} DESTROYED at {:.2} (lived {} ticks)",
-                             tick, id, last_position, lifetime_ticks);
-                }
-                walls::WallEvent::Moved { id, from, to, velocity, tick } => {
-                    println!("tick {:5}  wall {:3} MOVED  {:.2} -> {:.2} (v={:+.2})",
-                             tick, id, from, to, velocity);
-                }
-            }
+            // match event {
+            //     walls::WallEvent::Created { id, position, tick } => {
+            //         println!("tick {:5}  wall {:3} CREATED  at {:.2}", tick, id, position);
+            //     }
+            //     walls::WallEvent::Destroyed { id, last_position, tick, lifetime_ticks } => {
+            //         println!("tick {:5}  wall {:3} DESTROYED at {:.2} (lived {} ticks)",
+            //                  tick, id, last_position, lifetime_ticks);
+            //     }
+            //     walls::WallEvent::Moved { id, from, to, velocity, tick } => {
+            //         println!("tick {:5}  wall {:3} MOVED  {:.2} -> {:.2} (v={:+.2})",
+            //                  tick, id, from, to, velocity);
+            //     }
+            // }
             wall_voicer.handle(event, &midi_sender, osc_sink.as_mut());
+        }
+
+        if let Some(sink) = osc_sink.as_mut() {
+            sink.flush_tick();
         }
 
         // Pace to wall-clock.
