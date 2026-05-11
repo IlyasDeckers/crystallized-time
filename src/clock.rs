@@ -28,7 +28,15 @@ impl ClockEmitter {
     }
 
     /// Inspect the chain's current <M>; emit a clock pulse if it crossed zero.
-    pub fn tick(&mut self, chain: &SpinChain, sender: &MidiSender) {
+    /// Inspect the chain's current <M>; emit a clock pulse if it crossed zero.
+    /// If `osc_sink` is provided, also push a /clock/pulse event for every
+    /// MIDI pulse fired.
+    pub fn tick(
+        &mut self,
+        chain: &SpinChain,
+        sender: &MidiSender,
+        osc_sink: Option<&mut crate::osc_io::OscSink>,
+    ) {
         if !self.config.enabled {
             return;
         }
@@ -36,17 +44,10 @@ impl ClockEmitter {
         let current_m = chain.global_magnetization();
         let threshold = self.config.crossing_threshold;
 
-        // Sign change with a tiny minimum magnitude on the new side, so that
-        // values jittering at exactly zero don't fire spuriously. Threshold
-        // applies only to the post-crossing value.
         let sign_changed = self.prev_m.signum() != current_m.signum()
             && self.prev_m != 0.0;
         let above_floor = current_m.abs() > threshold;
         let crossed = sign_changed && above_floor;
-
-        // let crossed_up = self.prev_m < -threshold && current_m > threshold;
-        // let crossed_down = self.prev_m > threshold && current_m < -threshold;
-        // let crossed = crossed_up || crossed_down;
 
         let since_last = chain.tick.saturating_sub(self.last_pulse_tick);
         let debounced = since_last > self.config.debounce_ticks;
@@ -57,6 +58,11 @@ impl ClockEmitter {
                 self.config.pitch,
                 self.config.gate_length_ms,
             );
+            if let Some(sink) = osc_sink {
+                sink.push(crate::osc::OutboundEvent::ClockPulse {
+                    magnetization: current_m,
+                });
+            }
             self.last_pulse_tick = chain.tick;
         }
 

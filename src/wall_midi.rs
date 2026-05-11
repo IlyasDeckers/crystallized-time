@@ -44,26 +44,43 @@ impl WallVoiceAllocator {
         }
     }
 
-    /// Handle one wall event by sending the corresponding MIDI bytes.
-    pub fn handle(&mut self, event: &WallEvent, sender: &MidiSender) {
+    /// Handle one wall event by sending the corresponding MIDI bytes,
+    /// and (if `osc_sink` is provided) pushing a matching OSC event.
+    pub fn handle(
+        &mut self,
+        event: &WallEvent,
+        sender: &MidiSender,
+        osc_sink: Option<&mut crate::osc_io::OscSink>,
+    ) {
         match event {
             WallEvent::Created { id, position, tick } => {
-                self.handle_created(*id, *position, *tick, sender);
+                self.handle_created(*id, *position, *tick, sender, osc_sink);
             }
-            WallEvent::Destroyed { id, .. } => {
-                self.handle_destroyed(*id, sender);
+            WallEvent::Destroyed { id, last_position, lifetime_ticks, .. } => {
+                self.handle_destroyed(*id, *last_position, *lifetime_ticks, sender, osc_sink);
             }
-            WallEvent::Moved { id, to, .. } => {
-                self.handle_moved(*id, *to, sender);
+            WallEvent::Moved { id, from, to, velocity, .. } => {
+                self.handle_moved(*id, *from, *to, *velocity, sender, osc_sink);
             }
         }
     }
 
-    fn handle_moved(&mut self, id: u64, position: f64, sender: &MidiSender) {
+    fn handle_moved(
+        &mut self,
+        id: u64,
+        from: f64,
+        to: f64,
+        velocity: f64,
+        sender: &MidiSender,
+        osc_sink: Option<&mut crate::osc_io::OscSink>,
+    ) {
         if self.config.repitch_on_move {
-            self.handle_moved_repitch(id, position, sender);
+            self.handle_moved_repitch(id, to, sender);
         } else {
-            self.handle_moved_cc(id, position, sender);
+            self.handle_moved_cc(id, to, sender);
+        }
+        if let Some(sink) = osc_sink {
+            sink.push(crate::osc::OutboundEvent::WallMoved { id, from, to, velocity });
         }
     }
 
@@ -80,36 +97,39 @@ impl WallVoiceAllocator {
     fn handle_moved_repitch(&mut self, id: u64, position: f64, sender: &MidiSender) {
         let new_pitch = self.position_to_pitch(position);
 
-        // Look up the currently-sounding pitch for this wall.
         let voice = match self.active.get(&id) {
             Some(v) => v,
             None => return,
         };
 
         if voice.channel > 15 {
-            return; // defensive
-        }
-
-        if new_pitch == voice.pitch {
-            // No semitone-level change. Held note continues.
             return;
         }
 
-        // Pitch changed. End the old note, start the new one on the same channel.
+        if new_pitch == voice.pitch {
+            return;
+        }
+
         let channel = voice.channel;
         let old_pitch = voice.pitch;
-        let velocity = 96; // Step 7 will derive this from local order.
+        let velocity = 96;
 
         sender.send_note_off(channel, old_pitch);
         sender.send_note_on(channel, new_pitch, velocity);
 
-        // Update the active entry with the new sounding pitch.
         if let Some(v) = self.active.get_mut(&id) {
             v.pitch = new_pitch;
         }
     }
 
-    fn handle_created(&mut self, id: u64, position: f64, tick: u64, sender: &MidiSender) {
+    fn handle_created(
+        &mut self,
+        id: u64,
+        position: f64,
+        tick: u64,
+        sender: &MidiSender,
+        osc_sink: Option<&mut crate::osc_io::OscSink>,
+    ) {
         let channel = match self.allocate_channel() {
             Some(c) => c,
             None => match self.steal_oldest(sender) {
@@ -124,20 +144,20 @@ impl WallVoiceAllocator {
         let pitch = self.position_to_pitch(position);
         let velocity = 96;
 
-        // Set the channel's CC to the new wall's position *before* the note-on,
-        // so the synth's first audible moment is already at the correct position.
         if let Some(cc) = self.config.motion_cc {
             if !self.config.repitch_on_move {
                 sender.send_cc(channel, cc, self.position_to_cc(position));
             }
         }
-        
+
         sender.send_note_on(channel, pitch, velocity);
         self.active.insert(id, ActiveVoice { channel, pitch, born_at_tick: tick });
+
+        if let Some(sink) = osc_sink {
+            sink.push(crate::osc::OutboundEvent::WallCreated { id, position, channel });
+        }
     }
 
-    /// Free the channel of the oldest active voice, sending its note-off.
-    /// Returns the freed channel.
     fn steal_oldest(&mut self, sender: &MidiSender) -> Option<u8> {
         let victim_id = self
             .active
@@ -152,9 +172,23 @@ impl WallVoiceAllocator {
         Some(victim.channel)
     }
 
-    fn handle_destroyed(&mut self, id: u64, sender: &MidiSender) {
+    fn handle_destroyed(
+        &mut self,
+        id: u64,
+        last_position: f64,
+        lifetime_ticks: u64,
+        sender: &MidiSender,
+        osc_sink: Option<&mut crate::osc_io::OscSink>,
+    ) {
         if let Some(voice) = self.active.remove(&id) {
             sender.send_note_off(voice.channel, voice.pitch);
+        }
+        if let Some(sink) = osc_sink {
+            sink.push(crate::osc::OutboundEvent::WallDestroyed {
+                id,
+                last_position,
+                lifetime_ticks,
+            });
         }
     }
 

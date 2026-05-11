@@ -11,6 +11,8 @@ rand = "0.8"
 rand_distr = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 ctrlc = "3.4"
+arc-swap = "1.7"
+rosc = "0.10"
 
 [profile.release]
 opt-level = 3

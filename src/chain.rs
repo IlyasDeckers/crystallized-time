@@ -5,8 +5,10 @@
 //! When the substrate eventually swaps to quantum (quantrs2), only this file changes.
 
 use crate::config::PhysicsConfig;
+use arc_swap::ArcSwap;
 use rand::Rng;
 use rand_distr::StandardNormal;
+use std::sync::Arc;
 
 /// A single 3D spin, unit length.
 pub type Spin = [f64; 3];
@@ -16,8 +18,10 @@ pub type Vec3 = [f64; 3];
 
 /// State of the disordered Floquet spin chain.
 pub struct SpinChain {
-    /// Configuration (held for parameter access during steps).
-    pub config: PhysicsConfig,
+    /// Live configuration. Read once at the top of each step so the whole
+    /// step sees a consistent snapshot, even if another thread swaps the
+    /// pointer mid-step.
+    pub config: Arc<ArcSwap<PhysicsConfig>>,
     /// Spin vectors, one per site.
     pub spins: Vec<Spin>,
     /// Local field at each site (xy components small noise, z drawn from disorder).
@@ -31,8 +35,14 @@ pub struct SpinChain {
 impl SpinChain {
     /// Build a new chain with random initial spins, fields, and couplings.
     /// `rng` is taken so the caller controls seeding.
-    pub fn new(config: PhysicsConfig, rng: &mut impl Rng) -> Self {
-        let n = config.n_sites;
+    pub fn new(config: Arc<ArcSwap<PhysicsConfig>>, rng: &mut impl Rng) -> Self {
+        // Read the config once for setup. n_sites, w, and j are read here to
+        // initialize the chain's structure; after this point those values are
+        // not expected to change (the spec lists only kt, eps, j, w as mutable
+        // — n_sites changing requires rebuilding the chain, and w/j shape only
+        // the *initial* fields and couplings, not their ongoing values).
+        let snapshot = config.load();
+        let n = snapshot.n_sites;
 
         let mut spins = Vec::with_capacity(n);
         for _ in 0..n {
@@ -54,16 +64,19 @@ impl SpinChain {
             // Small random xy components, large random z component scaled by W.
             let hx: f64 = rng.sample::<f64, _>(StandardNormal) * 0.3;
             let hy: f64 = rng.sample::<f64, _>(StandardNormal) * 0.3;
-            let hz: f64 = (rng.gen::<f64>() * 2.0 - 1.0) * config.w;
+            let hz: f64 = (rng.gen::<f64>() * 2.0 - 1.0) * snapshot.w;
             fields.push([hx, hy, hz]);
         }
 
         let mut couplings = Vec::with_capacity(n.saturating_sub(1));
         for _ in 0..n.saturating_sub(1) {
             // J scaled by uniform random in [0.7, 1.3].
-            let j = config.j * (0.7 + rng.gen::<f64>() * 0.6);
+            let j = snapshot.j * (0.7 + rng.gen::<f64>() * 0.6);
             couplings.push(j);
         }
+
+        // Drop the load guard before storing the Arc on self.
+        drop(snapshot);
 
         Self {
             config,
@@ -78,9 +91,14 @@ impl SpinChain {
     /// Applies the drive pulse if `tick` lands on a drive boundary.
     /// `rng` is used for thermal noise.
     pub fn step(&mut self, rng: &mut impl Rng) {
-        let n = self.config.n_sites;
-        let dt = self.config.dt;
-        let kt = self.config.kt;
+        // One load per step. The returned guard borrows from the ArcSwap;
+        // dereferencing it gives &PhysicsConfig. All reads below come from
+        // this snapshot, so the step is internally consistent even if a
+        // concurrent writer swaps the pointer mid-step.
+        let snapshot = self.config.load();
+        let n = snapshot.n_sites;
+        let dt = snapshot.dt;
+        let kt = snapshot.kt;
 
         // Compute new spins from old spins. We can't update in place because
         // each spin's update depends on its neighbors' *current* values —
@@ -136,15 +154,17 @@ impl SpinChain {
         // If we just landed on a drive boundary, apply the kick.
         // tick > 0 so we don't kick on the very first step.
         self.tick += 1;
-        if self.tick > 0 && self.tick % self.config.ticks_per_period as u64 == 0 {
-            self.apply_drive_pulse();
+        if self.tick > 0 && self.tick % snapshot.ticks_per_period as u64 == 0 {
+            // Pass eps explicitly so apply_drive_pulse doesn't need to load
+            // again — it uses the same snapshot the rest of step() saw.
+            self.apply_drive_pulse(snapshot.eps);
         }
     }
 
     /// Apply the (1 - eps) * pi rotation around the x-axis to every spin.
     /// This is the periodic Floquet kick that produces period-doubling.
-    fn apply_drive_pulse(&mut self) {
-        let angle = (1.0 - self.config.eps) * std::f64::consts::PI;
+    fn apply_drive_pulse(&mut self, eps: f64) {
+        let angle = (1.0 - eps) * std::f64::consts::PI;
         let c = angle.cos();
         let si = angle.sin();
 

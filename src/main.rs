@@ -9,13 +9,17 @@ mod scheduler;
 mod clock;
 mod wall_midi;
 mod walls;
+mod osc;
+mod osc_io;
 
 use crate::wall_midi::WallVoiceAllocator;
 use clap::Parser;
-use config::{Config, TempoConfig};
+use config::{Config, TempoConfig,apply_smoothing, PhysicsTargets, SmoothingAlphas, SmoothingConfig};
 use rand::SeedableRng;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use arc_swap::ArcSwap;
+use std::sync::RwLock;
 
 #[derive(Parser, Debug)]
 #[command(name = "crystallized_time", version, about)]
@@ -60,6 +64,16 @@ struct Cli {
     /// Use discrete repitching on wall motion instead of held-pitch + CC.
     #[arg(long)]
     wall_repitch_on_move: bool,
+
+    /// UDP port to listen for inbound OSC parameter messages.
+    /// When unset, no OSC receiver thread is started.
+    #[arg(long)]
+    osc_listen: Option<u16>,
+
+    /// Destination "host:port" for outbound OSC events and state.
+    /// Parsed but unused until Step 4 lands.
+    #[arg(long)]
+    osc_send: Option<String>,
 }
 
 fn main() {
@@ -138,7 +152,51 @@ fn main() {
     };
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(config.seed);
-    let mut chain = chain::SpinChain::new(config.physics.clone(), &mut rng);
+
+    let physics_arc = Arc::new(ArcSwap::from_pointee(config.physics.clone()));
+    // Targets start equal to the initial config, so nothing smooths until an
+    // external writer (Step 3 onward: OSC receiver) changes a target value.
+    // Wrapped in Arc<RwLock<_>> so future threads can share it.
+    let targets = Arc::new(RwLock::new(PhysicsTargets::from_physics(&config.physics)));
+
+    // Spawn the OSC receiver if requested. The thread runs forever and is
+    // never joined; it terminates with the process. No-op when --osc-listen
+    // is absent, preserving Step 2's "OSC-off behavior is identical" guarantee.
+    if let Some(port) = cli.osc_listen {
+        match osc_io::spawn_receiver(port, Arc::clone(&targets)) {
+            Ok(bound) => println!("OSC: listening on port {}", bound),
+            Err(e) => {
+                eprintln!("Failed to bind OSC listener on port {}: {}", port, e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Spawn the OSC sender if requested. Returns a channel for pushing
+    // per-tick bundles; the sim thread holds an OscSink wrapper around it.
+    let mut osc_sink: Option<osc_io::OscSink> = None;
+    if let Some(addr) = cli.osc_send.as_deref() {
+        match osc_io::spawn_sender(addr) {
+            Ok(tx) => {
+                println!("OSC: sending to {}", addr);
+                osc_sink = Some(osc_io::OscSink::new(tx));
+            }
+            Err(e) => {
+                eprintln!("Failed to start OSC sender for {}: {}", addr, e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Smoothing config is held only by the simulation thread; not on the CLI.
+    // Per spec these are "tuned by listening and then committed to" rather than
+    // per-run knobs.
+    let smoothing_cfg = SmoothingConfig::default();
+    let dt_real_secs = config.tempo.drive_period_secs
+        / config.physics.ticks_per_period as f64;
+    let alphas = SmoothingAlphas::from_config(&smoothing_cfg, dt_real_secs);
+
+    let mut chain = chain::SpinChain::new(Arc::clone(&physics_arc), &mut rng);
     let mut detector = events::EventDetector::new(config.events.clone(), &chain);
     let mut clock_emitter = clock::ClockEmitter::new(config.clock.clone(), &chain);
     let mut wall_detector = walls::WallDetector::new(config.walls.clone());
@@ -162,13 +220,46 @@ fn main() {
             break;
         }
 
+        // Smooth physics parameters toward their targets. At rest (no OSC
+        // traffic, all parameters at target), apply_smoothing returns None,
+        // and we do no work — no Arc allocation, no ArcSwap store. When a
+        // target moves, this is one Arc::new + one atomic pointer swap per
+        // tick until the chain catches up.
+        {
+            let current = physics_arc.load();
+            let targets_snapshot = match targets.read() {
+                Ok(t) => t.clone(),
+                Err(_) => {
+                    // RwLock poisoned — a writer panicked while holding it.
+                    // Skip smoothing this tick; the chain continues on its
+                    // current snapshot. Recoverable.
+                    eprintln!("warning: physics targets lock poisoned, skipping smoothing");
+                    drop(current);
+                    chain.step(&mut rng);
+                    continue;
+                }
+            };
+            if let Some(new_cfg) = apply_smoothing(&current, &targets_snapshot, &alphas) {
+                drop(current); // release the load guard before the store
+                physics_arc.store(Arc::new(new_cfg));
+            }
+        }
+
         chain.step(&mut rng);
+
         let events = detector.check(&chain);
         for event in events {
             midi_sender.send_gate(event);
+            if let Some(sink) = osc_sink.as_mut() {
+                sink.push(osc::OutboundEvent::SiteEvent {
+                    site: event.site as u8,
+                    voice: event.voice,
+                    intensity: event.intensity,
+                });
+            }
         }
 
-        clock_emitter.tick(&chain, &midi_sender);
+        clock_emitter.tick(&chain, &midi_sender, osc_sink.as_mut());
 
         let wall_events = wall_detector.check(&chain);
         for event in &wall_events {
@@ -186,7 +277,7 @@ fn main() {
                              tick, id, from, to, velocity);
                 }
             }
-            wall_voicer.handle(event, &midi_sender);
+            wall_voicer.handle(event, &midi_sender, osc_sink.as_mut());
         }
 
         // Pace to wall-clock.
