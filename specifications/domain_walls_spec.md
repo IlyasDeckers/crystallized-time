@@ -2,7 +2,7 @@
 
 *Companion specification to `stage_1_2_spec.md`, `stage_2-5_spec.md`, and `stage_3_plus_reference.md`. Implementation spec — next on the list after Stage 2.5.*
 
-`Status: planned. Implement next.`
+`Status: finished`
 
 ---
 
