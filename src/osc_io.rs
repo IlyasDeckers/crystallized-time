@@ -168,15 +168,44 @@ fn sender_loop(socket: UdpSocket, dest: SocketAddr, rx: Receiver<OutboundBundle>
 pub struct OscSink {
     tx: SyncSender<OutboundBundle>,
     staging: Vec<OutboundEvent>,
+    /// Throttle state for /state/* messages. None means state pushing
+    /// is disabled (caller passed enable_state=false).
+    state_throttle: Option<StateThrottle>,
+}
+
+struct StateThrottle {
+    /// Minimum wall-clock interval between state pushes.
+    min_interval: std::time::Duration,
+    /// Time of the last state push. Initialized to Instant::now() at
+    /// construction so the first tick after startup is honored — the
+    /// first push will be one min_interval after the sink is built,
+    /// which is the natural debouncing behavior.
+    last_send: std::time::Instant,
 }
 
 impl OscSink {
-    pub fn new(tx: SyncSender<OutboundBundle>) -> Self {
+    pub fn new(tx: SyncSender<OutboundBundle>, config: &crate::config::OscConfig) -> Self {
+        let state_throttle = if config.enable_state {
+            // state_rate_hz <= 0 is a configuration error; treat as
+            // "disable state" rather than crashing on the division.
+            if config.state_rate_hz > 0.0 {
+                Some(StateThrottle {
+                    min_interval: std::time::Duration::from_secs_f64(
+                        1.0 / config.state_rate_hz,
+                    ),
+                    last_send: std::time::Instant::now(),
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Self {
             tx,
-            // Small initial capacity. Most ticks have 0–2 events; the
-            // vec will grow on its own if a thermal burst pushes through.
-            staging: Vec::with_capacity(8),
+            staging: Vec::with_capacity(16),
+            state_throttle,
         }
     }
 
@@ -184,6 +213,46 @@ impl OscSink {
     /// allocation unless the buffer needs to grow.
     pub fn push(&mut self, event: OutboundEvent) {
         self.staging.push(event);
+    }
+
+    /// Push the three state messages if the wall-clock throttle says
+    /// one is due. No-op if state pushing is disabled or the throttle
+    /// hasn't elapsed yet.
+    ///
+    /// `spins` is the chain's current per-site sigma_z values, cast to
+    /// f32 internally. `magnetization` is the mean. `wall_count` is the
+    /// number of currently-active walls.
+    pub fn push_state_if_due(
+        &mut self,
+        spins: &[f64],
+        magnetization: f64,
+        wall_count: usize,
+    ) {
+        let throttle = match &mut self.state_throttle {
+            Some(t) => t,
+            None => return,
+        };
+
+        let now = std::time::Instant::now();
+        if now.duration_since(throttle.last_send) < throttle.min_interval {
+            return;
+        }
+
+        // Throttle has elapsed. Push the three state messages into the
+        // staging buffer; they'll ship with whatever events the tick also
+        // produced when flush_tick runs.
+        let values: Vec<f32> = spins.iter().map(|v| *v as f32).collect();
+        self.staging.push(OutboundEvent::StateSpins { values });
+        self.staging.push(OutboundEvent::StateMagnetization {
+            magnetization: magnetization as f32,
+        });
+        // Wall counts beyond i32::MAX are unreachable in practice (chain
+        // has at most n_sites - 1 walls), but the cast is bounded anyway.
+        self.staging.push(OutboundEvent::StateWallCount {
+            count: wall_count.min(i32::MAX as usize) as i32,
+        });
+
+        throttle.last_send = now;
     }
 
     /// Ship the current tick's events as one bundle and clear the

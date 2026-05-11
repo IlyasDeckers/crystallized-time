@@ -74,6 +74,14 @@ struct Cli {
     /// Parsed but unused until Step 4 lands.
     #[arg(long)]
     osc_send: Option<String>,
+
+    /// Target rate for OSC state messages, in Hz. Default 50.
+    #[arg(long)]
+    osc_state_rate: Option<f64>,
+
+    /// Disable OSC state messages entirely. Events still flow.
+    #[arg(long)]
+    no_osc_state: bool,
 }
 
 fn main() {
@@ -100,6 +108,13 @@ fn main() {
     }
     wall_midi_cfg.repitch_on_move = cli.wall_repitch_on_move;
 
+    let osc_cfg = config::OscConfig {
+        state_rate_hz: cli.osc_state_rate.unwrap_or_else(|| {
+            config::OscConfig::default().state_rate_hz
+        }),
+        enable_state: !cli.no_osc_state,
+    };
+
     let config = Config {
         tempo: TempoConfig::from_bpm(cli.bpm),
         seed: cli.seed,
@@ -114,6 +129,7 @@ fn main() {
         },
         walls: walls_cfg,
         wall_midi: wall_midi_cfg,
+        osc: osc_cfg,
         ..Default::default()
     };
 
@@ -179,7 +195,7 @@ fn main() {
         match osc_io::spawn_sender(addr) {
             Ok(tx) => {
                 println!("OSC: sending to {}", addr);
-                osc_sink = Some(osc_io::OscSink::new(tx));
+                osc_sink = Some(osc_io::OscSink::new(tx, &config.osc));
             }
             Err(e) => {
                 eprintln!("Failed to start OSC sender for {}: {}", addr, e);
@@ -281,6 +297,15 @@ fn main() {
         }
 
         if let Some(sink) = osc_sink.as_mut() {
+            // Push state if the throttle says it's due. Internally
+            // checks wall-clock time; on most ticks at default settings
+            // (50 Hz throttle, 50 ticks/sec) this fires every tick.
+            let spins: Vec<f64> = chain.spins.iter().map(|s| s[2]).collect();
+            sink.push_state_if_due(
+                &spins,
+                chain.global_magnetization(),
+                wall_detector.wall_count(),
+            );
             sink.flush_tick();
         }
 

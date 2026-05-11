@@ -168,6 +168,12 @@ impl WallDetector {
         events
     }
 
+    /// Number of walls currently tracked. Reflects this tick's adds and
+    /// removes once `check()` has returned.
+    pub fn wall_count(&self) -> usize {
+        self.walls.len()
+    }
+
     /// Walk the chain and return one anonymous Wall per adjacent-site sign change.
     /// Pulled out as a helper so check() reads cleanly.
     fn scan_candidates(&self, chain: &SpinChain) -> Vec<Wall> {

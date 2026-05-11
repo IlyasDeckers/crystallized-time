@@ -64,6 +64,16 @@ pub enum OutboundEvent {
     ClockPulse {
         magnetization: f64,
     },
+    StateSpins {
+        /// Per-site sigma_z values. Length equals n_sites.
+        values: Vec<f32>,
+    },
+    StateMagnetization {
+        magnetization: f32,
+    },
+    StateWallCount {
+        count: i32,
+    },
 }
 
 /// Flatten an OSC packet into a sequence of recognized messages.
@@ -173,6 +183,18 @@ fn to_message(event: &OutboundEvent) -> rosc::OscMessage {
             args: vec![
                 RoscOscType::Float(*magnetization as f32),
             ],
+        },
+        OutboundEvent::StateSpins { values } => rosc::OscMessage {
+            addr: "/state/spins".to_string(),
+            args: values.iter().map(|v| RoscOscType::Float(*v)).collect(),
+        },
+        OutboundEvent::StateMagnetization { magnetization } => rosc::OscMessage {
+            addr: "/state/magnetization".to_string(),
+            args: vec![RoscOscType::Float(*magnetization)],
+        },
+        OutboundEvent::StateWallCount { count } => rosc::OscMessage {
+            addr: "/state/wall_count".to_string(),
+            args: vec![RoscOscType::Int(*count)],
         },
     }
 }
