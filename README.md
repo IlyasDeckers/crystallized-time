@@ -1,157 +1,142 @@
 # Crystallized Time
 
-*An audiovisual installation in progress. This repository contains its first working component: a program that turns the dynamics of a simulated physical system into MIDI output that drives a eurorack synthesizer.*
+A time-crystal-driven MIDI gate generator. Simulates a disordered classical spin chain under periodic Floquet drive and converts its dynamics into MIDI output for a eurorack synthesizer. The rhythm, pitch, and modulation signals all emerge from the simulation rather than being programmed directly.
+
+This repository contains the first working component of a larger audiovisual installation. See [`crystallized_time.md`](crystallized_time.md) for the full project description.
 
 ---
 
-## What this project is
+## How it works
 
-The eventual goal is an installation: a room where music and visuals are generated in real time by a simulated physical system, and where the people in the room are themselves part of that system. Their presence shapes what they hear and see.
+**Simulation.** The program runs a model of eight coupled spins. A periodic kick is applied to the whole chain at regular intervals. Under the right conditions (appropriate disorder, coupling strength, and temperature), the chain enters a period-doubled phase: each spin flips at half the drive rate. Nothing in the code specifies this rhythm; it emerges from the physics.
 
-The system being simulated is something physicists call a **discrete time crystal**. The full story is in [`crystallized_time.md`](crystallized_time.md), but the short version is this: it's a kind of matter that, when you push on it rhythmically, settles into a beat of its own, slower than the beat you're applying, and stable enough to keep going even when conditions change a little. It produces rhythm naturally, the way a vibrating string produces pitch naturally. That's the substrate. The music comes out of watching it move.
+**Readout.** Two observables are tracked simultaneously. Four of the eight spins are watched for zero-crossings (sign flips from up to down or back). Domain walls -- boundaries between adjacent spins pointing in opposite directions -- are tracked as mobile objects that appear, drift along the chain, and annihilate.
 
-This repository is **not the installation**. It's the first piece of working software the installation will eventually be built on.
-
----
-
-## How the music actually gets made
-
-Three layers, top to bottom.
-
-**The simulation.** The program runs a model of a chain of eight tiny magnets — "spins" — sitting in a row, each one influenced by its neighbors. Every half-second or so, the program gives the whole chain a synchronized kick. If the conditions are right (the right amount of disorder, the right strength of interaction, not too much heat), the chain falls into a rhythm: each spin flips up-down-up-down at half the rate of the kick. That's the time-crystal behavior. The rhythm is **emergent**. Nothing in the code says "flip every two kicks."
-
-**The reading.** The simulation runs continuously, and the program reads two different aspects of it. It watches four of the eight spins for *zero-crossings* — moments when a spin flips from up to down or down to up. It also watches the *boundaries* between regions of opposite spin, called domain walls, which appear, drift, and disappear as the chain evolves. Each of these is a different way of listening to the chain.
-
-**The output.** Each zero-crossing becomes a short MIDI gate: a 50-millisecond note triggered for the moment of the flip — the gate is the signal, useful for triggering envelopes and rhythmic events. Each domain wall, by contrast, becomes a *held note* whose lifetime is the wall's lifetime: note-on when the wall is born, note-off when the wall annihilates, possibly seconds or minutes later. While a wall is alive, its motion through the chain produces either a continuous CC stream (held pitch with movement modulating something like filter cutoff) or new note-on / note-off pairs as the position-derived pitch crosses semitone boundaries (a melodic line tracing the wall's drift). Both layers run on independent MIDI channels and feed the rig at the same time.
-
-There's also a **clock**. On top of everything else, the program watches the *average* of all the spins together. When that average crosses zero, the program sends out a gate pulse on its own MIDI channel. That pulse can drive the rest of the rig — sequencers, dividers, anything that wants a beat to follow. The point of this is that the clock comes from the simulation itself, not from a fixed metronome. When the simulated system is locked into its rhythm, the clock is steady. When the system is near a phase boundary or breaking down, the clock breathes or stops.
+**MIDI output.** Each zero-crossing produces a 50ms gate pulse, useful for triggering envelopes and rhythmic events. Each domain wall produces a held note: note-on when the wall is born, note-off when it annihilates. Wall motion is reported as a CC stream (position mapped to a configurable CC number) or as discrete repitching when the wall crosses semitone boundaries. A chain clock on its own channel derives from the chain's mean magnetization crossing zero, providing a beat signal that degrades naturally when the chain leaves the locked phase.
 
 ---
 
-## Running the program
-
-Full instructions are in [`crystallized_time/README.md`](crystallized_time/README.md). The short version:
+## Running
 
 ```sh
-cd crystallized_time
 cargo build --release
 cargo run --release -- --list-ports     # see available MIDI outputs
 cargo run --release -- --port 1         # run, sending to port 1
 ```
 
-You need a MIDI destination. On Windows, install [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) and create a virtual port to route into a DAW. On macOS, the IAC driver does the same thing. For hardware, a USB MIDI-to-CV interface plugged in will show up directly.
+A MIDI destination is required. On Windows, install [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) and create a virtual port. On macOS, use the IAC driver. For hardware, a USB MIDI-to-CV interface will appear directly in the port list.
 
 ---
 
-## Configuration
+## Command-line flags
 
-All parameters have defaults that work. The CLI exposes the ones you'll most often want to change.
-
-### Command-line flags
-
-| Flag | Default | What it does |
+| Flag | Default | Description |
 |---|---|---|
-| `--list-ports` | — | Print available MIDI output ports and exit. |
-| `--port <N>` | `0` | Which output port to send to. |
+| `--list-ports` | | Print available MIDI output ports and exit. |
+| `--port <N>` | `0` | Output port index. |
 | `--bpm <N>` | `120` | Tempo. One drive period = one beat. |
-| `--seed <N>` | `47` | RNG seed for the simulation. Same seed → same run. |
-| `--mode <name>` | `one-channel-per-chain` | Output topology for site-based voices. See below. |
-| `--clock-channel <N>` | `16` | MIDI channel for the substrate clock (1–16). |
-| `--no-clock` | — | Disable the substrate clock output. |
-| `--no-walls` | — | Disable domain-wall detection and output. |
-| `--wall-channels <lo>:<hi>` | `5:8` | MIDI channel range for wall voices (1–16). |
-| `--wall-pitch-range <lo>:<hi>` | `36:84` | MIDI pitch range walls span. |
-| `--wall-motion-cc <N>` | `1` | CC number for wall motion. `0` disables. |
-| `--wall-repitch-on-move` | — | Discrete repitching for wall motion instead of held pitch + CC. |
-| `--osc-listen <port>` | — | UDP port to receive OSC parameter messages on. See "Live control and visualization via OSC." |
-| `--osc-send <host:port>` | — | UDP destination to send OSC events and state to. |
-| `--osc-state-rate <hz>` | `50` | Throttle for the OSC state stream. |
-| `--no-osc-state` | — | Disable the OSC state stream (events still flow). |
+| `--seed <N>` | `47` | RNG seed. Same seed produces the same run. |
+| `--mode <name>` | `one-channel-per-chain` | Output topology. See below. |
+| `--clock-channel <N>` | `16` | MIDI channel for the chain clock (1-16). |
+| `--no-clock` | | Disable the chain clock. |
+| `--no-walls` | | Disable domain-wall detection. |
+| `--wall-channels <lo>:<hi>` | `5:8` | Channel range for wall voices (1-16). |
+| `--wall-pitch-range <lo>:<hi>` | `36:84` | Pitch range walls span. |
+| `--wall-motion-cc <N>` | `1` | CC number for wall position. `0` disables. |
+| `--wall-repitch-on-move` | | Discrete repitching on wall motion instead of held pitch + CC. |
+| `--osc-listen <port>` | | UDP port for inbound OSC parameter control. |
+| `--osc-send <host:port>` | | UDP destination for outbound OSC events and state. |
+| `--osc-state-rate <hz>` | `50` | Rate cap for the OSC state stream. |
+| `--no-osc-state` | | Disable the OSC state stream (events still flow). |
 
-### Output modes (site-based voices)
+### Output modes
 
-**`one-channel-per-chain`** (default). The whole chain plays as one monophonic voice on one MIDI channel. The four output sites each have their own pitch (C3, E3, G3, B3 by default — a Cmaj7 voicing).
+**`one-channel-per-chain`** (default). The whole chain is a single monophonic voice on channel 1. The four output sites each have their own pitch (C3, E3, G3, B3 by default).
 
-**`channel-per-site`**. Each of the four output sites gets its own MIDI channel (1, 2, 3, 4).
+**`channel-per-site`**. Each output site gets its own MIDI channel (1, 2, 3, 4).
 
-### Substrate clock
+In both modes, wall voices occupy their configured channel range (default 5-8) and the clock occupies its configured channel (default 16).
 
-Independent of the output mode, the program watches the *average magnetization* of the chain — the mean of all eight spin values — and emits a short gate pulse on the configured clock channel every time that average crosses zero. In the time-crystal phase this fires twice per crystal period; outside the phase the pulse rate degrades or stops. Feed this into a clock divider in your rig and it becomes the master clock for everything downstream.
+---
 
-### Domain walls
+## Chain clock
 
-A second sonification layer reads the chain's spatial structure. A **domain wall** is the boundary between adjacent sites with opposite spin direction; walls are point-like objects that get created in pairs, drift along the chain, and annihilate in pairs. Their lifetimes range from a few ticks (transient flickers in the locked phase) to many drive periods (persistent walls in the locked-but-perturbed regime).
+The program watches the mean magnetization of the chain and emits a gate pulse every time it crosses zero. In the locked phase this fires at a stable rate; near a phase boundary the pulse rate becomes irregular; in the thermal phase it stops. Feed this into a clock divider and it becomes the master clock for downstream sequencers and oscillators.
 
-Each wall becomes a held note on one of the wall channels (default 5–8), with note-on at the wall's birth and note-off at its annihilation. The wall's birth position determines its initial pitch; its lifetime determines the note's duration. Walls that move while alive contribute additional motion data, in one of two modes:
+---
 
-- **Held pitch + motion CC** (default). The note holds a single pitch for its lifetime; a CC stream (default CC 1) tracks the wall's position continuously. Patch this CC to filter cutoff, pan, or any modulation destination on the receiving synth, and the wall's spatial drift becomes spectral or stereo motion.
-- **Repitch on move** (`--wall-repitch-on-move`). Wall motion produces new note-on / note-off pairs as the position-derived pitch crosses semitone boundaries. The wall's trajectory becomes a melodic line of discrete pitches. This mode is gate-and-CV-friendly — useful for hardware MIDI-to-CV interfaces that can't easily route CC to modulation, like sequencer-first units that pair gate and pitch CV by default.
+## Domain walls
 
-The wall layer coexists with the site-based voices on independent channels; both run simultaneously and contribute to the same rig. With default settings, sites occupy channel 1 (Mode A) or channels 1–4 (Mode B), walls occupy channels 5–8, and the clock occupies channel 16.
+A domain wall is the boundary between adjacent sites with opposite spin direction. Walls exist as objects: they are born in pairs, drift along the chain, and annihilate in pairs. Their lifetime ranges from a few ticks (transient in the locked phase) to many drive periods (persistent walls in the partially-disordered regime).
 
-When walls are denser than available channels (occasionally on the first drive period of a fresh seed), the oldest active wall yields its channel to the new wall — voice stealing keeps every wall audible at the cost of cutting off long-held drones when the chain gets busy.
+Each wall sounds as a held note on one of the wall channels, with note-on at birth and note-off at annihilation. Wall motion is reported in one of two ways:
 
-### Physics parameters
+- **Held pitch + CC** (default). The note holds a single pitch; a CC stream tracks the wall's current position. Patch this CC to filter cutoff, pan, or any other modulation destination on the receiving synth.
+- **Repitch on move** (`--wall-repitch-on-move`). Wall motion produces new note-on/note-off pairs as the position-derived pitch crosses semitone boundaries. Useful for hardware MIDI-to-CV interfaces where CC-to-modulation routing is inconvenient.
 
-Not exposed on the CLI yet — they live in `src/config.rs` as defaults on `PhysicsConfig`. The ones that matter:
+When the number of active walls exceeds the available channels, the oldest active wall yields its channel to the new one.
+
+---
+
+## Physics parameters
+
+These are not exposed on the CLI and live in `src/config.rs` as defaults on `PhysicsConfig`.
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `n_sites` | `8` | Length of the chain. |
-| `eps` | `0.01` | Drive imperfection. Closer to 0 → tighter lock to the time-crystal phase. |
+| `n_sites` | `8` | Chain length. |
+| `eps` | `0.01` | Drive imperfection. Closer to 0 = tighter lock. |
 | `j` | `1.2` | Coupling strength between neighbors. |
-| `w` | `2.0` | Disorder width. Stabilizes the time-crystal phase against thermal breakup. |
-| `kt` | `0.1` | Effective temperature. Higher → more thermal noise → eventually breaks the phase. |
+| `w` | `2.0` | Disorder width. Stabilizes the locked phase against thermal noise. |
+| `kt` | `0.1` | Effective temperature. Higher values eventually break the phase. |
 | `ticks_per_period` | `25` | Integration steps per drive period. |
-
-Editing these and rebuilding gives you a different substrate. Pushing `kt` up is the easiest way to hear the phase break down; it's also the easiest way to thicken the wall layer, since walls become more numerous and shorter-lived as the chain approaches the thermal regime.
 
 ---
 
-## Live control and visualization via OSC
+## Live control via OSC
 
-Everything described so far runs as a one-way pipeline: the substrate evolves, the program reads observables out of it, MIDI flows out, the program never listens for anything. The OSC layer turns that into a two-way relationship. An external program can shape the substrate's parameters in real time *and* receive a live stream of what the substrate is doing internally.
+The OSC layer turns the program into a system that can be shaped in real time. An external program (TouchDesigner, a Python script, a custom controller) can write to the four mutable physics parameters while the simulation runs; the program publishes its internal state and events back over a second port.
 
-OSC (Open Sound Control) is a small protocol for sending named messages with arguments over UDP. Both directions of the link use it: the substrate listens for parameter writes on one port, and sends events and state to another port. Both are opt-in via CLI flags — without `--osc-listen` and `--osc-send`, no OSC threads start and behavior is exactly what you'd see with no flag at all.
+Both directions are opt-in. Without `--osc-listen` and `--osc-send`, no OSC threads start and the behavior is identical to running without the flags.
 
-### Inbound: parameter control
+### Inbound parameter control
 
-When `--osc-listen <port>` is set, the substrate listens for messages on four addresses, one per live-tunable physics parameter:
+When `--osc-listen <port>` is set, the program accepts messages on four addresses:
 
 ```
-/physics/kt   float    effective temperature, 0.0 – 2.0
-/physics/eps  float    drive imperfection,    0.0 – 0.5
-/physics/j    float    coupling strength,     0.0 – 3.0
-/physics/w    float    disorder width,        0.0 – 5.0
+/physics/kt   float    effective temperature,  0.0 - 2.0
+/physics/eps  float    drive imperfection,     0.0 - 0.5
+/physics/j    float    coupling strength,      0.0 - 3.0
+/physics/w    float    disorder width,         0.0 - 5.0
 ```
 
-Out-of-range values are clamped and malformed messages are dropped silently.
+Out-of-range values are clamped silently. Parameter changes are smoothed over several seconds so that sudden input produces a gradual transition rather than an audible click.
 
-Parameter changes are *smoothed*, not applied instantly. When TouchDesigner sends `/physics/kt 0.4`, the simulation thread starts moving its effective `kt` toward 0.4 along an exponential curve over a few seconds. This is deliberate: an instant parameter jump produces an audible glitch as the chain thermalizes or re-locks in one tick; smoothing turns the same change into a *regime transition* that takes a few seconds and is audibly a transition rather than a click.
+### Outbound events and state
 
-### Outbound: events and state
+When `--osc-send <host:port>` is set, the program publishes two kinds of traffic.
 
-When `--osc-send <host:port>` is set, the substrate publishes everything it does. Two kinds of traffic, sharing the same socket but distinguished by address.
+**Events** fire once per occurrence:
 
-**Events** fire on the tick something happens, zero or more per tick. They mirror what the MIDI side is doing, but with full information.
+```
+/site/event      int site, int voice, float intensity
+/clock/pulse     float magnetization
+/wall/created    int id, float position, int channel
+/wall/destroyed  int id, float last_position, int lifetime_ticks
+/wall/moved      int id, float from, float to, float velocity
+```
 
-- `/site/event` fires each time one of the output sites' σ_z crosses zero. Same trigger as the MIDI gate. Carries the site index, the voice index, and the crossing intensity.
-- `/clock/pulse` fires each time the global magnetization crosses zero, same trigger as the substrate clock channel.
-- `/wall/created`, `/wall/destroyed`, `/wall/moved` fire as walls appear, drift, and annihilate. The created event carries the wall's birth position and the MIDI channel the wall is sounding on — useful for color-coding walls by channel in a visual layer. The destroyed event carries the wall's final position and total lifetime in ticks. The moved event carries the wall's trajectory step-by-step.
+**State** is sampled at up to the configured rate (default 50 Hz):
 
-Multiple events on the same tick arrive as a single OSC bundle, one UDP packet. A clock pulse, a wall birth, and a site event all happening on the same tick travel together; the receiver sees three messages with one timestamp.
+```
+/state/spins           n_sites floats    per-site sigma_z values
+/state/magnetization   float             mean sigma_z
+/state/wall_count      int               number of active walls
+```
 
-**State** is sampled — exactly one snapshot per throttle interval (default 50 Hz, configurable with `--osc-state-rate`). Three addresses:
+Events and state that fire on the same tick are packed into a single OSC bundle and sent as one UDP packet.
 
-- `/state/spins` — the chain's per-site σ_z values, one float per site. Eight floats at default `n_sites`.
-- `/state/magnetization` — the mean σ_z across all sites. One float. This is the signal the substrate clock is derived from; visualizing it makes the clock's rhythm visible as the wave it actually is.
-- `/state/wall_count` — the number of currently active walls. One int. Goes up when the chain thrashes; near-zero in the locked phase.
-
-State messages ride in the same bundles as any events that fired on the same tick. A visualization receiving the stream can plot continuous values (magnetization wave, wall count over time) and overlay discrete events (clock pulses as flashes, walls appearing as marks) using a single OSC In.
-
-### Workflow
-
-The typical command-line invocation for bidirectional control:
+### Typical invocation
 
 ```sh
 cargo run --release -- --port 1 \
@@ -159,39 +144,11 @@ cargo run --release -- --port 1 \
     --osc-send 127.0.0.1:9001
 ```
 
-This makes the substrate listen for parameter writes on port 9000 and publish events and state to port 9001. Point your control surface at port 9000 and your visualization at port 9001 and the loop is closed.
+The program listens for parameter writes on port 9000 and publishes to port 9001.
 
-### Verifying the link without TouchDesigner
+---
 
-If something isn't behaving and you want to isolate the substrate from the visualization side, the smallest possible OSC client is three lines of Python:
-
-```python
-from pythonosc import udp_client
-c = udp_client.SimpleUDPClient('127.0.0.1', 9000)
-c.send_message('/physics/kt', 0.5)
-```
-
-Running this against the substrate started with `--osc-listen 9000` should produce audible thermalization over the next few seconds. The same script with `0.05` brings the chain back. If this works and TouchDesigner doesn't, the problem is on the TouchDesigner side, not the substrate side.
-
-For the outbound direction, `netcat` will dump raw packets without needing an OSC parser:
-
-```sh
-nc -u -l 9001
-```
-
-Run that with the substrate started with `--osc-send 127.0.0.1:9001` and you'll see binary OSC packets land — proof the substrate is sending. Decoding them by eye isn't fun, but the presence of traffic is itself the diagnostic.
-
-### Network notes
-
-The OSC layer binds to all interfaces (`0.0.0.0`) on the receive side, so an external machine on the same network can drive the substrate if your firewall allows it. The default workflow keeps everything on localhost, which on Windows is exempt from Windows Defender Firewall entirely — no rules needed. For cross-machine setups on Windows, allow inbound UDP on the listen port through the firewall:
-
-```powershell
-New-NetFirewallRule -DisplayName "Crystallized Time OSC" -Direction Inbound -Protocol UDP -LocalPort 9000 -Action Allow
-```
-
-### Message reference
-
-For quick lookup, the full message schema:
+## OSC message reference
 
 **Inbound** (`--osc-listen` port):
 
@@ -212,11 +169,11 @@ For quick lookup, the full message schema:
 | `/wall/destroyed` | int id, float last_position, int lifetime_ticks |
 | `/wall/moved` | int id, float from, float to, float velocity |
 
-**Outbound state** (throttled, default 50 Hz):
+**Outbound state** (throttled):
 
 | Address | Arguments |
 |---|---|
-| `/state/spins` | n_sites × float |
+| `/state/spins` | n_sites x float |
 | `/state/magnetization` | float |
 | `/state/wall_count` | int |
 
