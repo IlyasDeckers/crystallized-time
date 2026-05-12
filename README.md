@@ -63,6 +63,10 @@ All parameters have defaults that work. The CLI exposes the ones you'll most oft
 | `--wall-pitch-range <lo>:<hi>` | `36:84` | MIDI pitch range walls span. |
 | `--wall-motion-cc <N>` | `1` | CC number for wall motion. `0` disables. |
 | `--wall-repitch-on-move` | — | Discrete repitching for wall motion instead of held pitch + CC. |
+| `--osc-listen <port>` | — | UDP port to receive OSC parameter messages on. See "Live control and visualization via OSC." |
+| `--osc-send <host:port>` | — | UDP destination to send OSC events and state to. |
+| `--osc-state-rate <hz>` | `50` | Throttle for the OSC state stream. |
+| `--no-osc-state` | — | Disable the OSC state stream (events still flow). |
 
 ### Output modes (site-based voices)
 
@@ -101,6 +105,120 @@ Not exposed on the CLI yet — they live in `src/config.rs` as defaults on `Phys
 | `ticks_per_period` | `25` | Integration steps per drive period. |
 
 Editing these and rebuilding gives you a different substrate. Pushing `kt` up is the easiest way to hear the phase break down; it's also the easiest way to thicken the wall layer, since walls become more numerous and shorter-lived as the chain approaches the thermal regime.
+
+---
+
+## Live control and visualization via OSC
+
+Everything described so far runs as a one-way pipeline: the substrate evolves, the program reads observables out of it, MIDI flows out, the program never listens for anything. The OSC layer turns that into a two-way relationship. An external program can shape the substrate's parameters in real time *and* receive a live stream of what the substrate is doing internally.
+
+OSC (Open Sound Control) is a small protocol for sending named messages with arguments over UDP. Both directions of the link use it: the substrate listens for parameter writes on one port, and sends events and state to another port. Both are opt-in via CLI flags — without `--osc-listen` and `--osc-send`, no OSC threads start and behavior is exactly what you'd see with no flag at all.
+
+### Inbound: parameter control
+
+When `--osc-listen <port>` is set, the substrate listens for messages on four addresses, one per live-tunable physics parameter:
+
+```
+/physics/kt   float    effective temperature, 0.0 – 2.0
+/physics/eps  float    drive imperfection,    0.0 – 0.5
+/physics/j    float    coupling strength,     0.0 – 3.0
+/physics/w    float    disorder width,        0.0 – 5.0
+```
+
+Out-of-range values are clamped and malformed messages are dropped silently.
+
+Parameter changes are *smoothed*, not applied instantly. When TouchDesigner sends `/physics/kt 0.4`, the simulation thread starts moving its effective `kt` toward 0.4 along an exponential curve over a few seconds. This is deliberate: an instant parameter jump produces an audible glitch as the chain thermalizes or re-locks in one tick; smoothing turns the same change into a *regime transition* that takes a few seconds and is audibly a transition rather than a click.
+
+### Outbound: events and state
+
+When `--osc-send <host:port>` is set, the substrate publishes everything it does. Two kinds of traffic, sharing the same socket but distinguished by address.
+
+**Events** fire on the tick something happens, zero or more per tick. They mirror what the MIDI side is doing, but with full information.
+
+- `/site/event` fires each time one of the output sites' σ_z crosses zero. Same trigger as the MIDI gate. Carries the site index, the voice index, and the crossing intensity.
+- `/clock/pulse` fires each time the global magnetization crosses zero, same trigger as the substrate clock channel.
+- `/wall/created`, `/wall/destroyed`, `/wall/moved` fire as walls appear, drift, and annihilate. The created event carries the wall's birth position and the MIDI channel the wall is sounding on — useful for color-coding walls by channel in a visual layer. The destroyed event carries the wall's final position and total lifetime in ticks. The moved event carries the wall's trajectory step-by-step.
+
+Multiple events on the same tick arrive as a single OSC bundle, one UDP packet. A clock pulse, a wall birth, and a site event all happening on the same tick travel together; the receiver sees three messages with one timestamp.
+
+**State** is sampled — exactly one snapshot per throttle interval (default 50 Hz, configurable with `--osc-state-rate`). Three addresses:
+
+- `/state/spins` — the chain's per-site σ_z values, one float per site. Eight floats at default `n_sites`.
+- `/state/magnetization` — the mean σ_z across all sites. One float. This is the signal the substrate clock is derived from; visualizing it makes the clock's rhythm visible as the wave it actually is.
+- `/state/wall_count` — the number of currently active walls. One int. Goes up when the chain thrashes; near-zero in the locked phase.
+
+State messages ride in the same bundles as any events that fired on the same tick. A visualization receiving the stream can plot continuous values (magnetization wave, wall count over time) and overlay discrete events (clock pulses as flashes, walls appearing as marks) using a single OSC In.
+
+### Workflow
+
+The typical command-line invocation for bidirectional control:
+
+```sh
+cargo run --release -- --port 1 \
+    --osc-listen 9000 \
+    --osc-send 127.0.0.1:9001
+```
+
+This makes the substrate listen for parameter writes on port 9000 and publish events and state to port 9001. Point your control surface at port 9000 and your visualization at port 9001 and the loop is closed.
+
+### Verifying the link without TouchDesigner
+
+If something isn't behaving and you want to isolate the substrate from the visualization side, the smallest possible OSC client is three lines of Python:
+
+```python
+from pythonosc import udp_client
+c = udp_client.SimpleUDPClient('127.0.0.1', 9000)
+c.send_message('/physics/kt', 0.5)
+```
+
+Running this against the substrate started with `--osc-listen 9000` should produce audible thermalization over the next few seconds. The same script with `0.05` brings the chain back. If this works and TouchDesigner doesn't, the problem is on the TouchDesigner side, not the substrate side.
+
+For the outbound direction, `netcat` will dump raw packets without needing an OSC parser:
+
+```sh
+nc -u -l 9001
+```
+
+Run that with the substrate started with `--osc-send 127.0.0.1:9001` and you'll see binary OSC packets land — proof the substrate is sending. Decoding them by eye isn't fun, but the presence of traffic is itself the diagnostic.
+
+### Network notes
+
+The OSC layer binds to all interfaces (`0.0.0.0`) on the receive side, so an external machine on the same network can drive the substrate if your firewall allows it. The default workflow keeps everything on localhost, which on Windows is exempt from Windows Defender Firewall entirely — no rules needed. For cross-machine setups on Windows, allow inbound UDP on the listen port through the firewall:
+
+```powershell
+New-NetFirewallRule -DisplayName "Crystallized Time OSC" -Direction Inbound -Protocol UDP -LocalPort 9000 -Action Allow
+```
+
+### Message reference
+
+For quick lookup, the full message schema:
+
+**Inbound** (`--osc-listen` port):
+
+| Address | Arguments |
+|---|---|
+| `/physics/kt` | float |
+| `/physics/eps` | float |
+| `/physics/j` | float |
+| `/physics/w` | float |
+
+**Outbound events** (`--osc-send` destination):
+
+| Address | Arguments |
+|---|---|
+| `/site/event` | int site, int voice, float intensity |
+| `/clock/pulse` | float magnetization |
+| `/wall/created` | int id, float position, int channel |
+| `/wall/destroyed` | int id, float last_position, int lifetime_ticks |
+| `/wall/moved` | int id, float from, float to, float velocity |
+
+**Outbound state** (throttled, default 50 Hz):
+
+| Address | Arguments |
+|---|---|
+| `/state/spins` | n_sites × float |
+| `/state/magnetization` | float |
+| `/state/wall_count` | int |
 
 ---
 
