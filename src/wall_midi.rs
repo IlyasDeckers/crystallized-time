@@ -167,8 +167,7 @@ impl WallVoiceAllocator {
 
         let victim = self.active.remove(&victim_id)?;
         sender.send_note_off(victim.channel, victim.pitch);
-        eprintln!("wall {}: stolen for new voice on channel {}",
-                  victim_id, victim.channel + 1);
+
         Some(victim.channel)
     }
 
