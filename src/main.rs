@@ -1,12 +1,12 @@
 mod chain;
-mod cli;          // NEW: Cli, parse_*, From<Cli> for Config
+mod cli;
 mod clock;
 mod config;
 mod events;
 mod midi;
 mod osc;
 mod osc_io;
-mod runtime;     // NEW
+mod runtime;
 mod scheduler;
 mod wall_midi;
 mod walls;

@@ -77,15 +77,6 @@ pub enum OutboundEvent {
 }
 
 /// Flatten an OSC packet into a sequence of recognized messages.
-///
-/// Bundles are unwrapped recursively — TouchDesigner may batch multiple
-/// parameter writes per frame into a single packet, and they're all
-/// equivalent to individually-delivered messages as far as we care.
-///
-/// Anything we don't recognize (wrong address, wrong argument types,
-/// wrong argument count) is dropped silently. Per spec: "Malformed
-/// messages are dropped silently. The receiver thread does not
-/// propagate parse errors."
 pub fn extract_messages(packet: OscPacket) -> Vec<InboundMessage> {
     let mut out = Vec::new();
     walk(packet, &mut out);

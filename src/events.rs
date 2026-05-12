@@ -30,7 +30,7 @@ pub struct EventDetector {
 }
 
 impl EventDetector {
-    /// Build a detector. Initial prev_sz values come from the chain's current state
+    /// Build a detector. Initial prev_sz values come from the chain's current state,
     /// so the first step doesn't spuriously fire.
     pub fn new(config: EventConfig, chain: &SpinChain) -> Self {
         let prev_sz: Vec<f64> = config
@@ -57,8 +57,6 @@ impl EventDetector {
             let prev = self.prev_sz[k];
             let threshold = self.config.crossing_threshold;
 
-            // Signed zero-crossing: previous and current must be on opposite sides
-            // of the threshold band, not just both within it.
             let crossed_up = prev < -threshold && current_sz > threshold;
             let crossed_down = prev > threshold && current_sz < -threshold;
             let crossed = crossed_up || crossed_down;

@@ -1,12 +1,4 @@
 //! Scheduler for delayed MIDI messages (note-offs, primarily).
-//!
-//! Owns the MIDI connection. Replaces the thread-per-note design where each
-//! note-off was sent from its own short-lived thread sleeping for the gate
-//! length. A single background thread now drains a min-heap of pending
-//! note-offs in deadline order, which gives us:
-//!   - clean shutdown (we know exactly which note-offs are pending)
-//!   - per-channel state for last-note-wins mono priority (Stage 2.5 Mode A)
-//!   - one place that touches the MIDI connection
 
 use midir::MidiOutputConnection;
 use std::cmp::{Ordering, Reverse};
@@ -24,10 +16,6 @@ struct PendingMessage {
     /// Raw 3-byte MIDI message (status, data1, data2).
     bytes: [u8; 3],
 }
-
-// BinaryHeap is a max-heap; we want the earliest deadline on top.
-// Implementing Ord by fire_at lets us wrap entries in Reverse to flip it.
-// Eq and PartialEq are required by Ord; we only compare by fire_at.
 
 impl Ord for PendingMessage {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -109,10 +97,7 @@ impl NoteOffScheduler {
                 }
                 break;
             }
-
-            // Collect all messages whose fire_at is in the past.
-            // We hold the heap lock briefly, then release it before sending,
-            // so send_now and schedule aren't blocked while MIDI bytes go out.
+            
             let now = Instant::now();
             let due: Vec<PendingMessage> = {
                 let mut h = heap.lock().unwrap();

@@ -139,7 +139,6 @@ fn build_wall_midi(cli: &Cli) -> WallMidiConfig {
 // to either accept the parsed pair or print a usage error. Splitting them
 // out from `parse_u8_pair` keeps the bound-checking (channels 1..=16 vs
 // pitches 0..=127) close to the flag definitions that need it.
-
 fn parse_channel_range(s: &str) -> Result<(u8, u8), String> {
     let (lo, hi) = parse_u8_pair(s)?;
     if lo < 1 || hi > 16 {

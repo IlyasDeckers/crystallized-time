@@ -1,10 +1,5 @@
 //! MIDI output. Wraps midir to send note-on/note-off pairs for each GateEvent.
-//!
-//! Note-off is scheduled on a background thread with a sleep so the main loop
-//! doesn't block waiting for gate length. This is the simplest correct approach
-//! for short fixed gate lengths; for variable or long gates we'd switch to a
-//! priority queue of pending note-offs serviced by the loop.
-
+//! 
 use crate::config::{MidiConfig, OutputMode};
 use crate::events::GateEvent;
 use midir::MidiOutput;
@@ -86,10 +81,7 @@ impl MidiSender {
         }
 
         let velocity = (event.intensity * 127.0).clamp(1.0, 127.0) as u8;
-
-        // Mono priority for Mode A: if a note is currently sounding on this
-        // channel, send its note-off before the new note-on. In Mode B each
-        // channel has only one voice, so no prior note will be sounding.
+        
         if self.config.mode == OutputMode::OneChannelPerChain {
             if let Ok(mut sounding) = self.sounding.lock() {
                 if let Some(prior_pitch) = sounding[channel as usize].take() {
@@ -172,8 +164,6 @@ impl MidiSender {
         };
 
         for channel in channels {
-            // CC 123 = All Notes Off, CC 120 = All Sound Off.
-            // Status byte 0xB0 is Control Change; OR with channel for the channel.
             let all_notes_off = [0xB0 | channel, 123, 0];
             let all_sound_off = [0xB0 | channel, 120, 0];
             self.scheduler.send_now(all_notes_off);

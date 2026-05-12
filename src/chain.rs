@@ -36,11 +36,6 @@ impl SpinChain {
     /// Build a new chain with random initial spins, fields, and couplings.
     /// `rng` is taken so the caller controls seeding.
     pub fn new(config: Arc<ArcSwap<PhysicsConfig>>, rng: &mut impl Rng) -> Self {
-        // Read the config once for setup. n_sites, w, and j are read here to
-        // initialize the chain's structure; after this point those values are
-        // not expected to change (the spec lists only kt, eps, j, w as mutable
-        // — n_sites changing requires rebuilding the chain, and w/j shape only
-        // the *initial* fields and couplings, not their ongoing values).
         let snapshot = config.load();
         let n = snapshot.n_sites;
 
@@ -61,7 +56,6 @@ impl SpinChain {
 
         let mut fields = Vec::with_capacity(n);
         for _ in 0..n {
-            // Small random xy components, large random z component scaled by W.
             let hx: f64 = rng.sample::<f64, _>(StandardNormal) * 0.3;
             let hy: f64 = rng.sample::<f64, _>(StandardNormal) * 0.3;
             let hz: f64 = (rng.gen::<f64>() * 2.0 - 1.0) * snapshot.w;
@@ -70,12 +64,10 @@ impl SpinChain {
 
         let mut couplings = Vec::with_capacity(n.saturating_sub(1));
         for _ in 0..n.saturating_sub(1) {
-            // J scaled by uniform random in [0.7, 1.3].
             let j = snapshot.j * (0.7 + rng.gen::<f64>() * 0.6);
             couplings.push(j);
         }
-
-        // Drop the load guard before storing the Arc on self.
+        
         drop(snapshot);
 
         Self {
@@ -91,10 +83,6 @@ impl SpinChain {
     /// Applies the drive pulse if `tick` lands on a drive boundary.
     /// `rng` is used for thermal noise.
     pub fn step(&mut self, rng: &mut impl Rng) {
-        // One load per step. The returned guard borrows from the ArcSwap;
-        // dereferencing it gives &PhysicsConfig. All reads below come from
-        // this snapshot, so the step is internally consistent even if a
-        // concurrent writer swaps the pointer mid-step.
         let snapshot = self.config.load();
         let n = snapshot.n_sites;
         let dt = snapshot.dt;
@@ -150,13 +138,9 @@ impl SpinChain {
         }
 
         self.spins = new_spins;
-
-        // If we just landed on a drive boundary, apply the kick.
-        // tick > 0 so we don't kick on the very first step.
+        
         self.tick += 1;
         if self.tick > 0 && self.tick % snapshot.ticks_per_period as u64 == 0 {
-            // Pass eps explicitly so apply_drive_pulse doesn't need to load
-            // again — it uses the same snapshot the rest of step() saw.
             self.apply_drive_pulse(snapshot.eps);
         }
     }

@@ -4,10 +4,6 @@
 //! Walls are objects with persistent identity — born when a sign-flip appears,
 //! destroyed when neighboring spins re-align. They drift, they get created in
 //! pairs, they annihilate in pairs.
-//!
-//! This module owns the Wall and WallEvent types and (eventually) the
-//! WallDetector that produces events from a chain. Voice allocation and MIDI
-//! routing live in wall_midi.rs.
 
 /// A domain wall as a tracked object.
 #[derive(Clone, Debug)]
@@ -76,12 +72,9 @@ impl WallDetector {
         if !self.config.enabled {
             return Vec::new();
         }
-
-        // 1. Build candidate list — walls observed at this tick, no IDs yet.
+        
         let mut candidates = self.scan_candidates(chain);
-
-        // 2. Match candidates against previous walls. The matched_prev_idx
-        //    array tracks which previous walls have been claimed.
+        
         let n_prev = self.walls.len();
         let mut matched_prev = vec![false; n_prev];
         let mut candidate_match: Vec<Option<usize>> = vec![None; candidates.len()];
@@ -105,8 +98,7 @@ impl WallDetector {
                 matched_prev[pi] = true;
             }
         }
-
-        // 3. Emit events for matched, created, destroyed walls.
+        
         let mut events: Vec<WallEvent> = Vec::new();
 
         // Created: candidates with no match. Assign fresh IDs.
@@ -138,7 +130,6 @@ impl WallDetector {
                     candidate.id = self.next_id;
                     self.next_id += 1;
                     candidate.velocity = 0.0;
-                    // birth_tick was already set to chain.tick in scan_candidates
                     events.push(WallEvent::Created {
                         id: candidate.id,
                         position: candidate.position,
@@ -161,8 +152,7 @@ impl WallDetector {
                 });
             }
         }
-
-        // 4. Replace the stored wall list with this tick's walls.
+        
         self.walls = new_walls;
 
         events
@@ -193,8 +183,7 @@ impl WallDetector {
                     let l_abs = left.abs();
                     let r_abs = right.abs();
                     let denom = l_abs + r_abs;
-                    // denom is the sum of two absolute values of nonzero numbers,
-                    // so it's strictly positive. No divide-by-zero possible here.
+                    
                     i as f64 + l_abs / denom
                 } else {
                     i as f64 + 0.5

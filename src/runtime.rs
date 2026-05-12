@@ -164,9 +164,7 @@ impl Runtime {
         sink.flush_tick();
     }
 
-    /// Clean shutdown: All Notes Off / All Sound Off on used channels,
-    /// then a brief sleep so the scheduler's worker can flush pending
-    /// note-offs at their natural deadlines before the connection drops.
+    /// Clean shutdown: All Notes Off / All Sound Off on used channels.
     pub fn shutdown(self) {
         self.midi_sender.shutdown();
         std::thread::sleep(Duration::from_millis(self.gate_length_ms + 50));

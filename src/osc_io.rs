@@ -39,10 +39,6 @@ pub fn spawn_receiver(
     port: u16,
     targets: Arc<RwLock<PhysicsTargets>>,
 ) -> std::io::Result<u16> {
-    // Bind to 0.0.0.0 (all interfaces). For localhost-only use the
-    // sender targets 127.0.0.1, which still arrives here; binding
-    // 0.0.0.0 is more permissive without exposing anything dangerous
-    // (the inbound surface is just four clamped floats).
     let socket = UdpSocket::bind(("0.0.0.0", port))?;
     let bound_port = socket.local_addr()?.port();
 
@@ -54,9 +50,6 @@ pub fn spawn_receiver(
 }
 
 fn receiver_loop(socket: UdpSocket, targets: Arc<RwLock<PhysicsTargets>>) {
-    // rosc::decoder::MTU is the recommended max packet size; bigger
-    // packets would have been fragmented at the IP layer and we
-    // wouldn't see them whole here anyway.
     let mut buf = [0u8; MTU];
 
     loop {
@@ -73,7 +66,7 @@ fn receiver_loop(socket: UdpSocket, targets: Arc<RwLock<PhysicsTargets>>) {
 
         let packet = match rosc::decoder::decode_udp(&buf[..size]) {
             Ok((_remaining, pkt)) => pkt,
-            Err(_) => continue, // malformed OSC; drop silently per spec
+            Err(_) => continue,
         };
 
         let messages = extract_messages(packet);
@@ -87,11 +80,6 @@ fn receiver_loop(socket: UdpSocket, targets: Arc<RwLock<PhysicsTargets>>) {
         let mut t = match targets.write() {
             Ok(g) => g,
             Err(_) => {
-                // Lock poisoned — a previous holder panicked. Log
-                // once-per-occurrence (this thread keeps running so
-                // this could print repeatedly if the panic was on the
-                // sim side, but in practice the program is dead at
-                // that point and the user will notice).
                 eprintln!("warning: physics targets lock poisoned; dropping OSC writes");
                 continue;
             }
@@ -130,10 +118,7 @@ pub fn spawn_sender(send_addr: &str) -> std::io::Result<SyncSender<OutboundBundl
             format!("invalid OSC send address '{}': {}", send_addr, e),
         )
     })?;
-
-    // Bind to any local port. We're a UDP sender; the local port is
-    // arbitrary, the OS picks one. Bind 0.0.0.0 so we work whether the
-    // destination is loopback or a real interface.
+    
     let socket = UdpSocket::bind("0.0.0.0:0")?;
 
     let (tx, rx) = sync_channel::<OutboundBundle>(16);
@@ -146,16 +131,12 @@ pub fn spawn_sender(send_addr: &str) -> std::io::Result<SyncSender<OutboundBundl
 }
 
 fn sender_loop(socket: UdpSocket, dest: SocketAddr, rx: Receiver<OutboundBundle>) {
-    // recv blocks until a bundle arrives or the channel closes (which
-    // happens when the last sender is dropped — typically at program
-    // exit). Either way, no busy-loop.
     while let Ok(events) = rx.recv() {
         let bytes = serialize_bundle(&events);
         if bytes.is_empty() {
             continue;
         }
-        // send_to failure is silent — same posture as the rest of the
-        // OSC path. A dropped packet costs the visualization one frame.
+
         let _ = socket.send_to(&bytes, dest);
     }
 }
@@ -186,8 +167,6 @@ struct StateThrottle {
 impl OscSink {
     pub fn new(tx: SyncSender<OutboundBundle>, config: &crate::config::OscConfig) -> Self {
         let state_throttle = if config.enable_state {
-            // state_rate_hz <= 0 is a configuration error; treat as
-            // "disable state" rather than crashing on the division.
             if config.state_rate_hz > 0.0 {
                 Some(StateThrottle {
                     min_interval: std::time::Duration::from_secs_f64(
@@ -237,10 +216,7 @@ impl OscSink {
         if now.duration_since(throttle.last_send) < throttle.min_interval {
             return;
         }
-
-        // Throttle has elapsed. Push the three state messages into the
-        // staging buffer; they'll ship with whatever events the tick also
-        // produced when flush_tick runs.
+        
         let values: Vec<f32> = spins.iter().map(|v| *v as f32).collect();
         self.staging.push(OutboundEvent::StateSpins { values });
         self.staging.push(OutboundEvent::StateMagnetization {
@@ -265,8 +241,7 @@ impl OscSink {
         if self.staging.is_empty() {
             return;
         }
-        // Take ownership of the staged events so we can send them
-        // across the channel, leaving an empty Vec in their place.
+
         let bundle = std::mem::take(&mut self.staging);
         match self.tx.try_send(bundle) {
             Ok(()) => {}
