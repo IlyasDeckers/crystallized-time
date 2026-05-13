@@ -58,7 +58,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use super::{
-    ClockConfig, Config, EventConfig, MidiConfig, OscConfig, PhysicsConfig, TempoConfig,
+    ClockConfig, Config, EventConfig, InputConfig, MidiConfig, OscConfig,
+    PerturbationConfig, PerturbationKindConfig, PhysicsConfig, TempoConfig,
     WallConfig, WallMidiConfig,
 };
 
@@ -129,6 +130,7 @@ struct TomlConfig {
     /// this is what the single chain uses. When both are absent, the
     /// program defaults apply.
     physics: Option<PhysicsSection>,
+    input: Option<InputSection>,
     chain_a: ChainSection,
 }
 
@@ -143,6 +145,23 @@ struct OscSection {
     send_address: Option<String>,
     state_rate_hz: Option<f64>,
     enable_state: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InputSection {
+    perturbation: Option<PerturbationSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PerturbationSection {
+    base_note: Option<u8>,
+    velocity_scale: Option<f64>,
+    /// One of "flip", "rotate", "field_spike". Defaults to "rotate".
+    kind: Option<String>,
+    /// Required for Rotate and FieldSpike. One of "x", "y", "z".
+    axis: Option<String>,
+    /// Rotation angle in radians (Rotate) or field magnitude (FieldSpike).
+    magnitude: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -251,6 +270,8 @@ impl TomlConfig {
         // gate voice. Indices come from the voice_N names.
         let events = build_events(&self.chain_a.gates)?;
 
+        let input = build_input(self.input)?;
+
         // Duplicate-channel validation across every claimed channel.
         validate_no_duplicates(
             &gate_channels_used,
@@ -277,6 +298,7 @@ impl TomlConfig {
             walls,
             wall_midi,
             osc,
+            input,
             seed,
         })
     }
@@ -292,6 +314,60 @@ fn build_osc(section: Option<OscSection>) -> OscConfig {
             enable_state: s.enable_state.unwrap_or(defaults.enable_state),
         },
         None => defaults,
+    }
+}
+
+fn build_input(section: Option<InputSection>) -> Result<Option<InputConfig>, ConfigError> {
+    let Some(s) = section else { return Ok(None) };
+
+    let pert_defaults = PerturbationConfig::default();
+    let p = s.perturbation.unwrap_or(PerturbationSection {
+        base_note: None,
+        velocity_scale: None,
+        kind: None,
+        axis: None,
+        magnitude: None,
+    });
+
+    let kind_str = p.kind.as_deref().unwrap_or("rotate").to_lowercase();
+    let kind = match kind_str.as_str() {
+        "flip" => PerturbationKindConfig::Flip,
+        "rotate" => {
+            let axis = parse_axis(p.axis.as_deref().unwrap_or("x"))?;
+            let base_angle = p.magnitude.unwrap_or(0.3);
+            PerturbationKindConfig::Rotate { axis, base_angle }
+        }
+        "field_spike" => {
+            let axis = parse_axis(p.axis.as_deref().unwrap_or("x"))?;
+            let base_magnitude = p.magnitude.unwrap_or(0.5);
+            PerturbationKindConfig::FieldSpike { axis, base_magnitude }
+        }
+        other => {
+            return Err(ConfigError::Validation(format!(
+                "input.perturbation.kind must be 'flip', 'rotate', or 'field_spike' (got '{}')",
+                other
+            )));
+        }
+    };
+
+    Ok(Some(InputConfig {
+        perturbation: PerturbationConfig {
+            base_note: p.base_note.unwrap_or(pert_defaults.base_note),
+            kind,
+            velocity_scale: p.velocity_scale.unwrap_or(pert_defaults.velocity_scale),
+        },
+    }))
+}
+
+fn parse_axis(s: &str) -> Result<crate::chain::Axis, ConfigError> {
+    match s.to_lowercase().as_str() {
+        "x" => Ok(crate::chain::Axis::X),
+        "y" => Ok(crate::chain::Axis::Y),
+        "z" => Ok(crate::chain::Axis::Z),
+        other => Err(ConfigError::Validation(format!(
+            "axis must be 'x', 'y', or 'z' (got '{}')",
+            other
+        ))),
     }
 }
 
@@ -771,5 +847,75 @@ mod tests {
         let config = load_str(toml).expect("should parse");
         // 60 BPM → 1.0 sec drive period
         assert!((config.tempo.drive_period_secs - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn input_section_optional() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+    "#;
+        let config = load_str(toml).expect("should parse");
+        assert!(config.input.is_none());
+    }
+
+    #[test]
+    fn input_section_loads_with_defaults() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+
+        [input]
+        [input.perturbation]
+    "#;
+        let config = load_str(toml).expect("should parse");
+        let input = config.input.expect("input should be present");
+        assert_eq!(input.perturbation.base_note, 60);
+        matches!(
+        input.perturbation.kind,
+        crate::config::PerturbationKindConfig::Rotate { .. }
+    );
+    }
+
+    #[test]
+    fn input_kind_flip_parses() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+
+        [input.perturbation]
+        kind = "flip"
+    "#;
+        let config = load_str(toml).expect("should parse");
+        let input = config.input.expect("input present");
+        assert!(matches!(
+        input.perturbation.kind,
+        crate::config::PerturbationKindConfig::Flip
+    ));
+    }
+
+    #[test]
+    fn input_unknown_kind_rejected() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+
+        [input.perturbation]
+        kind = "wiggle"
+    "#;
+        let err = load_str(toml).expect_err("bad kind should fail");
+        assert!(format!("{}", err).contains("wiggle"));
     }
 }

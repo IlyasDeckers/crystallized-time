@@ -6,14 +6,14 @@
 # Comment a section out (or delete it) to fall back to compiled defaults.
 
 [tempo]
-bpm = 120
+bpm = 17
 
 # OSC. Comment out listen_port / send_address to disable each side.
-# [osc]
-# listen_port = 9000
-# send_address = "127.0.0.1:9001"
-# state_rate_hz = 50
-# enable_state = true
+[osc]
+listen_port = 9000
+send_address = "127.0.0.1:9001"
+state_rate_hz = 50
+enable_state = true
 
 # Physics. Shared block — applies to every chain that doesn't define its
 # own [chain_x.physics]. With only one chain today, this is just "the
@@ -35,9 +35,9 @@ seed = 47
 # behaviour — mono priority kicks in automatically when voices collide.
 [chain_a.gates]
 voice_0 = { channel = 1, pitch = 48 }    # C3
-voice_2 = { channel = 1, pitch = 52 }    # E3
-voice_4 = { channel = 1, pitch = 55 }    # G3
-voice_6 = { channel = 1, pitch = 59 }    # B3
+voice_2 = { channel = 2, pitch = 52 }    # E3
+voice_4 = { channel = 3, pitch = 55 }    # G3
+voice_6 = { channel = 4, pitch = 59 }    # B3
 gate_length_ms = 50
 
 # Wall voice pool. Round-robin across these channels; voice stealing
@@ -51,9 +51,20 @@ voice_3 = 8
 pitch_low = 36          # C2
 pitch_high = 84         # C6
 motion_cc = 1           # 0 disables; 1 = mod wheel
-repitch_on_move = false
+repitch_on_move = true
 
 # Substrate clock. Gates on channel 16 derived from the chain's mean
 # magnetization crossing zero.
 [chain_a.clock]
 channel = 16
+
+# Optional. Uncomment to enable MIDI input as a perturbation source.
+# When this section is absent, the chain runs autonomously (no input).
+#
+[input]
+[input.perturbation]
+base_note = 60         # MIDI note that maps to site 0. C4 by default.
+kind = "rotate"        # "flip" | "rotate" | "field_spike"
+axis = "x"             # rotation axis or field-spike direction
+magnitude = 5.6        # angle in radians (rotate) or field strength (spike)
+velocity_scale = 1.0   # 1.0 = full mag at v127, 0 = silent

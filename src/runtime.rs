@@ -14,6 +14,8 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use crate::input::MidiInputListener;
+use crate::perturbation::PerturbationRouter;
 
 pub struct Runtime {
     chain: SpinChain,
@@ -23,6 +25,8 @@ pub struct Runtime {
     wall_voicer: WallVoiceAllocator,
     midi_sender: MidiSender,
     osc_sink: Option<OscSink>,
+    input_listener: Option<MidiInputListener>,
+    perturbation_router: Option<PerturbationRouter>,
 
     physics_arc: Arc<ArcSwap<PhysicsConfig>>,
     targets: Arc<RwLock<PhysicsTargets>>,
@@ -32,6 +36,9 @@ pub struct Runtime {
     /// Cached for use by run_until's pacing loop.
     tick_duration: Duration,
     gate_length_ms: u64,
+    n_sites: usize,
+
+    debug: bool,
 }
 
 impl Runtime {
@@ -43,6 +50,8 @@ impl Runtime {
         midi_sender: MidiSender,
         osc_sink: Option<OscSink>,
         targets: Arc<RwLock<PhysicsTargets>>,
+        input_listener: Option<MidiInputListener>,
+        perturbation_router: Option<PerturbationRouter>,
     ) -> Self {
         let mut rng = StdRng::seed_from_u64(config.seed);
 
@@ -68,12 +77,16 @@ impl Runtime {
             wall_voicer,
             midi_sender,
             osc_sink,
+            input_listener,
+            perturbation_router,
             physics_arc,
             targets,
             alphas,
             rng,
             tick_duration,
             gate_length_ms: config.midi.gate_length_ms,
+            n_sites: config.physics.n_sites,
+            debug: false
         }
     }
 
@@ -104,9 +117,10 @@ impl Runtime {
 
     /// One simulation tick. Order matters: smooth params, step physics,
     /// detect events, run the clock, run wall detection, flush OSC.
-    fn step(&mut self, _tick: u64) {
+    fn step(&mut self, tick: u64) {
         self.advance_smoothing();
         self.chain.step(&mut self.rng);
+        self.apply_input_perturbations();
         self.emit_site_events();
         self.clock_emitter
             .tick(&self.chain, &self.midi_sender, self.osc_sink.as_mut());
@@ -162,6 +176,23 @@ impl Runtime {
             self.wall_detector.wall_count(),
         );
         sink.flush_tick();
+    }
+
+    /// Drain any pending MIDI input messages and apply the resulting
+    /// perturbations to the chain. No-op if no input is configured or no
+    /// messages arrived this tick.
+    fn apply_input_perturbations(&mut self) {
+        let (Some(listener), Some(router)) =
+            (self.input_listener.as_ref(), self.perturbation_router.as_ref())
+        else {
+            return;
+        };
+
+        for msg in listener.poll() {
+            if let Some((site, kind)) = router.route(msg, self.n_sites) {
+                self.chain.perturb(site, kind);
+            }
+        }
     }
 
     /// Clean shutdown: All Notes Off / All Sound Off on used channels.

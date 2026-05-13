@@ -16,6 +16,36 @@ pub type Spin = [f64; 3];
 /// A 3D vector (used for fields, couplings as scaled vectors, etc.).
 pub type Vec3 = [f64; 3];
 
+/// Rotation axis for localized perturbations.
+///
+/// An enum rather than a char so the compiler enforces exhaustiveness —
+/// adding a new variant later will produce build errors at every match site
+/// that hasn't handled it. Cheap insurance.
+#[derive(Clone, Copy, Debug)]
+pub enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+/// A single localized perturbation applied to one site at one tick.
+///
+/// `Flip` and `Rotate` modify the spin vector directly. `FieldSpike` modifies
+/// the effective field for the *next* integration step, then clears itself —
+/// so a spike is a one-tick forced perturbation, not a state change.
+#[derive(Clone, Copy, Debug)]
+pub enum PerturbationKind {
+    /// Negate the z-component of the spin. The x and y components are
+    /// untouched; renormalization happens regardless (cheap, robust against
+    /// floating-point drift).
+    Flip,
+    /// Rotate the spin by `angle` radians around `axis`.
+    Rotate { axis: Axis, angle: f64 },
+    /// Add `delta` to this site's effective field for exactly the next
+    /// integration step, then clear.
+    FieldSpike { delta: Vec3 },
+}
+
 /// State of the disordered Floquet spin chain.
 pub struct SpinChain {
     /// Live configuration. Read once at the top of each step so the whole
@@ -28,6 +58,10 @@ pub struct SpinChain {
     pub fields: Vec<Vec3>,
     /// Nearest-neighbor coupling strengths J_{i,i+1}, length n_sites - 1.
     pub couplings: Vec<f64>,
+    /// One-tick field perturbations, one slot per site. Most slots are `None`
+    /// at any given time. `step` consumes any `Some` value into the effective
+    /// field for that tick, then sets the slot back to `None`.
+    pending_field_deltas: Vec<Option<Vec3>>,
     /// Tick counter (advances on every step).
     pub tick: u64,
 }
@@ -67,7 +101,7 @@ impl SpinChain {
             let j = snapshot.j * (0.7 + rng.gen::<f64>() * 0.6);
             couplings.push(j);
         }
-        
+
         drop(snapshot);
 
         Self {
@@ -75,7 +109,74 @@ impl SpinChain {
             spins,
             fields,
             couplings,
+            pending_field_deltas: vec![None; n],
             tick: 0,
+        }
+    }
+
+    /// Apply a localized perturbation to one site. Out-of-range site indices
+    /// are silently dropped — perturbation requests come from external input
+    /// (MIDI, OSC) and a bad request shouldn't kill the realtime loop.
+    pub fn perturb(&mut self, site: usize, kind: PerturbationKind) {
+        if site >= self.spins.len() {
+            return;
+        }
+        match kind {
+            PerturbationKind::Flip => {
+                self.spins[site][2] = -self.spins[site][2];
+                self.renormalize_site(site);
+            }
+            PerturbationKind::Rotate { axis, angle } => {
+                self.rotate_site(site, axis, angle);
+                self.renormalize_site(site);
+            }
+            PerturbationKind::FieldSpike { delta } => {
+                self.pending_field_deltas[site] = Some(delta);
+            }
+        }
+    }
+
+    /// Rotate one site's spin by `angle` radians around `axis`. Same rotation
+    /// math as `apply_drive_pulse`, generalized to any axis and one site.
+    fn rotate_site(&mut self, i: usize, axis: Axis, angle: f64) {
+        let c = angle.cos();
+        let s = angle.sin();
+        let spin = &mut self.spins[i];
+        match axis {
+            Axis::X => {
+                // Rotation in the y-z plane; x is the axis of rotation.
+                let y_new = spin[1] * c - spin[2] * s;
+                let z_new = spin[1] * s + spin[2] * c;
+                spin[1] = y_new;
+                spin[2] = z_new;
+            }
+            Axis::Y => {
+                // Rotation in the z-x plane; y is the axis.
+                let z_new = spin[2] * c - spin[0] * s;
+                let x_new = spin[2] * s + spin[0] * c;
+                spin[2] = z_new;
+                spin[0] = x_new;
+            }
+            Axis::Z => {
+                // Rotation in the x-y plane; z is the axis.
+                let x_new = spin[0] * c - spin[1] * s;
+                let y_new = spin[0] * s + spin[1] * c;
+                spin[0] = x_new;
+                spin[1] = y_new;
+            }
+        }
+    }
+
+    /// Renormalize one site's spin to unit length. Belt-and-braces against
+    /// floating-point drift after perturbations. No-op if the spin is the
+    /// zero vector (shouldn't happen, but defended against).
+    fn renormalize_site(&mut self, i: usize) {
+        let s = &mut self.spins[i];
+        let norm = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt();
+        if norm > 0.0 {
+            s[0] /= norm;
+            s[1] /= norm;
+            s[2] /= norm;
         }
     }
 
@@ -105,6 +206,15 @@ impl SpinChain {
             }
             if i < n - 1 {
                 h[2] += self.couplings[i] * self.spins[i + 1][2];
+            }
+
+            // Consume any pending field spike for this site. `.take()` reads
+            // the Option and replaces it with None in one move, so the spike
+            // lasts exactly one step.
+            if let Some(delta) = self.pending_field_deltas[i].take() {
+                h[0] += delta[0];
+                h[1] += delta[1];
+                h[2] += delta[2];
             }
 
             // Torque: s × h. This is the precession term.
@@ -138,7 +248,7 @@ impl SpinChain {
         }
 
         self.spins = new_spins;
-        
+
         self.tick += 1;
         if self.tick > 0 && self.tick % snapshot.ticks_per_period as u64 == 0 {
             self.apply_drive_pulse(snapshot.eps);

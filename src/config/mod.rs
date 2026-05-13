@@ -20,9 +20,11 @@ mod osc;
 mod physics;
 mod tempo;
 mod walls;
+mod input;
 
 pub use clock::ClockConfig;
 pub use events::EventConfig;
+pub use input::{InputConfig, PerturbationConfig, PerturbationKindConfig};
 pub use midi::MidiConfig;
 pub use osc::OscConfig;
 pub use physics::{
@@ -43,5 +45,6 @@ pub struct Config {
     pub walls: WallConfig,
     pub wall_midi: WallMidiConfig,
     pub osc: OscConfig,
+    pub input: Option<InputConfig>,
     pub seed: u64,
 }

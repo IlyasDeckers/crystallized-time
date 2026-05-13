@@ -10,6 +10,8 @@ mod runtime;
 mod scheduler;
 mod wall_midi;
 mod walls;
+mod input;
+mod perturbation;
 
 use crate::cli::Cli;
 use crate::config::{config_file, Config, PhysicsTargets};
@@ -23,6 +25,10 @@ fn main() {
 
     if cli.list_ports {
         return list_ports();
+    }
+
+    if cli.list_input_ports {
+        return list_input_ports();
     }
 
     let config = match config_file::load(&cli.config) {
@@ -45,8 +51,16 @@ fn main() {
 
     let targets = Arc::new(RwLock::new(PhysicsTargets::from_physics(&config.physics)));
     let osc_sink = start_osc(&config, Arc::clone(&targets));
-
-    let mut runtime = Runtime::build(&config, midi_sender, osc_sink, targets);
+    let (input_listener, perturbation_router) = open_input(&cli, &config);
+    
+    let mut runtime = Runtime::build(
+        &config,
+        midi_sender,
+        osc_sink,
+        targets,
+        input_listener,
+        perturbation_router,
+    );
 
     let total_ticks =
         cli.periods.unwrap_or(20_000) * config.physics.ticks_per_period as u64;
@@ -86,6 +100,63 @@ fn list_ports() {
             std::process::exit(1);
         }
     }
+}
+
+fn list_input_ports() {
+    match input::MidiInputListener::list_ports() {
+        Ok(ports) => {
+            println!("Available MIDI input ports:");
+            if ports.is_empty() {
+                println!("  (none)");
+            } else {
+                for (i, name) in ports.iter().enumerate() {
+                    println!("  [{}] {}", i, name);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error listing input ports: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn open_input(
+    cli: &Cli,
+    config: &Config,
+) -> (
+    Option<input::MidiInputListener>,
+    Option<perturbation::PerturbationRouter>,
+) {
+    // No [input] section in the config: input is fully disabled, regardless
+    // of whether --input-port was given. Telling the user is friendlier than
+    // silently ignoring the flag.
+    let Some(input_cfg) = config.input.as_ref() else {
+        if cli.input_port.is_some() {
+            eprintln!(
+                "warning: --input-port was given but the config file has no [input] section; \
+                 input will not be opened"
+            );
+        }
+        return (None, None);
+    };
+
+    let Some(port_index) = cli.input_port else {
+        // Config opted in but no port chosen on the CLI. Equally valid —
+        // user might want to enumerate first.
+        return (None, None);
+    };
+
+    let listener = match input::MidiInputListener::open(port_index) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Failed to open MIDI input port {}: {}", port_index, e);
+            std::process::exit(1);
+        }
+    };
+
+    let router = perturbation::PerturbationRouter::new(input_cfg.perturbation.clone());
+    (Some(listener), Some(router))
 }
 
 fn start_osc(
