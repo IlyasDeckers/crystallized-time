@@ -12,7 +12,7 @@ mod wall_midi;
 mod walls;
 
 use crate::cli::Cli;
-use crate::config::{Config, PhysicsTargets};
+use crate::config::{config_file, Config, PhysicsTargets};
 use crate::runtime::Runtime;
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,7 +25,13 @@ fn main() {
         return list_ports();
     }
 
-    let config = Config::from(&cli);
+    let config = match config_file::load(&cli.config) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
 
     let running = install_shutdown_handler();
 
@@ -38,13 +44,16 @@ fn main() {
     };
 
     let targets = Arc::new(RwLock::new(PhysicsTargets::from_physics(&config.physics)));
-    let osc_sink = start_osc(&cli, &config, Arc::clone(&targets));
+    let osc_sink = start_osc(&config, Arc::clone(&targets));
 
     let mut runtime = Runtime::build(&config, midi_sender, osc_sink, targets);
 
     let total_ticks =
         cli.periods.unwrap_or(20_000) * config.physics.ticks_per_period as u64;
-    println!("Running for {} drive periods...", total_ticks / config.physics.ticks_per_period as u64);
+    println!(
+        "Running for {} drive periods...",
+        total_ticks / config.physics.ticks_per_period as u64
+    );
 
     runtime.run_until(total_ticks, &running);
 
@@ -80,11 +89,10 @@ fn list_ports() {
 }
 
 fn start_osc(
-    cli: &Cli,
     config: &Config,
     targets: Arc<RwLock<PhysicsTargets>>,
 ) -> Option<osc_io::OscSink> {
-    if let Some(port) = cli.osc_listen {
+    if let Some(port) = config.osc.listen_port {
         match osc_io::spawn_receiver(port, targets) {
             Ok(bound) => println!("OSC: listening on port {}", bound),
             Err(e) => {
@@ -94,7 +102,7 @@ fn start_osc(
         }
     }
 
-    let addr = cli.osc_send.as_deref()?;
+    let addr = config.osc.send_address.as_deref()?;
     match osc_io::spawn_sender(addr) {
         Ok(tx) => {
             println!("OSC: sending to {}", addr);

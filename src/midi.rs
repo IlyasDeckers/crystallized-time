@@ -1,12 +1,12 @@
 //! MIDI output. Wraps midir to send note-on/note-off pairs for each GateEvent.
-//! 
-use crate::config::{MidiConfig, OutputMode};
+
+use crate::config::MidiConfig;
 use crate::events::GateEvent;
-use midir::MidiOutput;
-use std::time::{Duration, Instant};
 use crate::scheduler::NoteOffScheduler;
+use midir::MidiOutput;
 use std::collections::HashSet;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// MIDI sender. Owns a connection to a single output port.
 pub struct MidiSender {
@@ -35,9 +35,13 @@ impl MidiSender {
         let midi_out = MidiOutput::new("crystallized_time")?;
         let ports = midi_out.ports();
 
-        let port = ports
-            .get(port_index)
-            .ok_or_else(|| format!("port index {} out of range (found {} ports)", port_index, ports.len()))?;
+        let port = ports.get(port_index).ok_or_else(|| {
+            format!(
+                "port index {} out of range (found {} ports)",
+                port_index,
+                ports.len()
+            )
+        })?;
 
         let port_name = midi_out.port_name(port)?;
         println!("Opening MIDI port [{}]: {}", port_index, port_name);
@@ -53,46 +57,61 @@ impl MidiSender {
     }
 
     /// Send a gate: note-on now, note-off scheduled after gate_length_ms.
-    /// Send a gate. Routing depends on `config.mode`.
+    ///
+    /// Per-voice routing: channel and pitch come from the config vecs
+    /// indexed by `event.voice`. Mono priority applies per-channel —
+    /// if another voice is currently sounding on the same channel, its
+    /// note-off fires immediately. Voices on distinct channels don't
+    /// interact, which reproduces the historic ChannelPerSite behavior
+    /// without a mode flag.
     pub fn send_gate(&self, event: GateEvent) {
-        let (channel, pitch) = match self.config.mode {
-            OutputMode::OneChannelPerChain => {
-                let pitch = self.config
-                    .voice_pitches
-                    .get(event.voice as usize)
-                    .copied()
-                    .unwrap_or(self.config.pitch);
-                (self.config.base_channel, pitch)
-            }
-            OutputMode::ChannelPerSite => {
-                let channel = self.config.base_channel + event.voice;
-                (channel, self.config.pitch)
+        let voice = event.voice as usize;
+
+        // Look up channel and pitch from the parallel vecs. If the event
+        // refers to a voice the config doesn't define (shouldn't happen
+        // post-loader, but guard anyway), drop silently — better than
+        // panicking in the realtime path.
+        let channel = match self.config.voice_channels.get(voice) {
+            Some(&c) if c <= 15 => c,
+            _ => {
+                eprintln!(
+                    "warning: voice {} has no valid channel (config has {} entries)",
+                    event.voice,
+                    self.config.voice_channels.len()
+                );
+                return;
             }
         };
-
-        if channel > 15 {
-            eprintln!("warning: voice {} maps to MIDI channel {} (> 15), skipping",
-                      event.voice, channel + 1);
-            return;
-        }
+        let pitch = match self.config.voice_pitches.get(voice) {
+            Some(&p) => p,
+            None => {
+                eprintln!(
+                    "warning: voice {} has no pitch defined (config has {} entries)",
+                    event.voice,
+                    self.config.voice_pitches.len()
+                );
+                return;
+            }
+        };
 
         if let Ok(mut used) = self.used_channels.lock() {
             used.insert(channel);
         }
 
         let velocity = (event.intensity * 127.0).clamp(1.0, 127.0) as u8;
-        
-        if self.config.mode == OutputMode::OneChannelPerChain {
-            if let Ok(mut sounding) = self.sounding.lock() {
-                if let Some(prior_pitch) = sounding[channel as usize].take() {
-                    let prior_off = [0x80 | channel, prior_pitch, 0];
-                    self.scheduler.send_now(prior_off);
-                }
-                sounding[channel as usize] = Some(pitch);
+
+        // Mono priority per channel: if something's already sounding on
+        // this channel, retire it before sending the new note-on. Voices
+        // on distinct channels never trip this branch.
+        if let Ok(mut sounding) = self.sounding.lock() {
+            if let Some(prior_pitch) = sounding[channel as usize].take() {
+                let prior_off = [0x80 | channel, prior_pitch, 0];
+                self.scheduler.send_now(prior_off);
             }
+            sounding[channel as usize] = Some(pitch);
         }
 
-        let note_on  = [0x90 | channel, pitch, velocity];
+        let note_on = [0x90 | channel, pitch, velocity];
         let note_off = [0x80 | channel, pitch, 0];
 
         self.scheduler.send_now(note_on);
@@ -101,7 +120,7 @@ impl MidiSender {
     }
 
     /// Send a clock-style gate pulse on a specific channel. Used by the
-    /// substrate clock; not subject to mode routing or mono-priority logic.
+    /// substrate clock; bypasses voice routing and mono-priority logic.
     pub fn send_clock_pulse(&self, channel: u8, pitch: u8, gate_length_ms: u64) {
         if channel > 15 {
             return;
@@ -111,7 +130,7 @@ impl MidiSender {
             used.insert(channel);
         }
 
-        let note_on  = [0x90 | channel, pitch & 0x7F, 100];
+        let note_on = [0x90 | channel, pitch & 0x7F, 100];
         let note_off = [0x80 | channel, pitch & 0x7F, 0];
 
         self.scheduler.send_now(note_on);

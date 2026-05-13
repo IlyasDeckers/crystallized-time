@@ -1,9 +1,5 @@
 //! Domain-wall detection parameters (the physics-side config) and
 //! domain-wall MIDI output parameters (the routing-side config).
-//!
-//! The two live together because they exist only because of each
-//! other and are always used as a pair — wall physics has no purpose
-//! without wall MIDI, and wall MIDI has no input without wall physics.
 
 /// Domain-wall detection parameters.
 #[derive(Clone, Debug)]
@@ -32,8 +28,11 @@ impl Default for WallConfig {
 /// Domain-wall MIDI output parameters.
 #[derive(Clone, Debug)]
 pub struct WallMidiConfig {
-    pub channel_low: u8,
-    pub channel_high: u8,
+    /// Explicitly named channels (0-15) for the wall voice pool. The
+    /// allocator picks the next free channel from this list when a wall
+    /// is created; voice stealing applies when the pool is exhausted.
+    /// Order matters: the round-robin starts at index 0 and walks the vec.
+    pub channels: Vec<u8>,
     pub pitch_low: u8,
     pub pitch_high: u8,
     pub motion_cc: Option<u8>,
@@ -46,8 +45,8 @@ pub struct WallMidiConfig {
 impl Default for WallMidiConfig {
     fn default() -> Self {
         Self {
-            channel_low: 4,
-            channel_high: 7,
+            // Channels 5-8 in 1-based UI, 0-indexed here.
+            channels: vec![4, 5, 6, 7],
             pitch_low: 36,
             pitch_high: 60,
             motion_cc: Some(1),

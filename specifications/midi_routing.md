@@ -2,7 +2,7 @@
 
 *Companion specification to `stage_1_2_spec.md`, `stage_2-5_spec.md`, `domain_walls_spec.md`, and `OSC_implementation_spec.md`. Implementation spec.*
 
-`Status: planned.`
+`Status: Finished.`
 
 ---
 
