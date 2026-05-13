@@ -26,6 +26,8 @@ cargo run --release -- --port 1         # run, sending to port 1
 
 A MIDI destination is required. On Windows, install [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) and create a virtual port. On macOS, use the IAC driver. For hardware, a USB MIDI-to-CV interface will appear directly in the port list.
 
+All routing, tempo, physics, and OSC settings live in [`config.toml`](config.toml) in the project root. The included default file reproduces the previous program defaults exactly — edit it to change anything.
+
 ---
 
 ## Command-line flags
@@ -34,28 +36,79 @@ A MIDI destination is required. On Windows, install [loopMIDI](https://www.tobia
 |---|---|---|
 | `--list-ports` | | Print available MIDI output ports and exit. |
 | `--port <N>` | `0` | Output port index. |
-| `--bpm <N>` | `120` | Tempo. One drive period = one beat. |
-| `--seed <N>` | `47` | RNG seed. Same seed produces the same run. |
-| `--mode <name>` | `one-channel-per-chain` | Output topology. See below. |
-| `--clock-channel <N>` | `16` | MIDI channel for the chain clock (1-16). |
-| `--no-clock` | | Disable the chain clock. |
-| `--no-walls` | | Disable domain-wall detection. |
-| `--wall-channels <lo>:<hi>` | `5:8` | Channel range for wall voices (1-16). |
-| `--wall-pitch-range <lo>:<hi>` | `36:84` | Pitch range walls span. |
-| `--wall-motion-cc <N>` | `1` | CC number for wall position. `0` disables. |
-| `--wall-repitch-on-move` | | Discrete repitching on wall motion instead of held pitch + CC. |
-| `--osc-listen <port>` | | UDP port for inbound OSC parameter control. |
-| `--osc-send <host:port>` | | UDP destination for outbound OSC events and state. |
-| `--osc-state-rate <hz>` | `50` | Rate cap for the OSC state stream. |
-| `--no-osc-state` | | Disable the OSC state stream (events still flow). |
+| `--config <path>` | `config.toml` | Path to the TOML config file. |
+| `--periods <N>` | `20000` | Number of drive periods to run. |
 
-### Output modes
+Everything else — tempo, RNG seed, physics parameters, MIDI routing, OSC ports — is set in the config file.
 
-**`one-channel-per-chain`** (default). The whole chain is a single monophonic voice on channel 1. The four output sites each have their own pitch (C3, E3, G3, B3 by default).
+---
 
-**`channel-per-site`**. Each output site gets its own MIDI channel (1, 2, 3, 4).
+## The config file
 
-In both modes, wall voices occupy their configured channel range (default 5-8) and the clock occupies its configured channel (default 16).
+`config.toml` is loaded from the project root by default. The shape:
+
+```toml
+[tempo]
+bpm = 120
+
+[osc]                                # optional
+listen_port = 9000
+send_address = "127.0.0.1:9001"
+
+[physics]                            # optional shared block
+kt = 0.1
+eps = 0.01
+j = 1.2
+w = 2.0
+n_sites = 8
+ticks_per_period = 25
+
+[chain_a]
+seed = 47
+
+[chain_a.gates]
+voice_0 = { channel = 1, pitch = 48 }
+voice_2 = { channel = 1, pitch = 52 }
+voice_4 = { channel = 1, pitch = 55 }
+voice_6 = { channel = 1, pitch = 59 }
+gate_length_ms = 50
+
+[chain_a.walls]
+voice_0 = 5
+voice_1 = 6
+voice_2 = 7
+voice_3 = 8
+pitch_low = 36
+pitch_high = 84
+motion_cc = 1
+repitch_on_move = false
+
+[chain_a.clock]
+channel = 16
+```
+
+Channel numbers in the file are 1-based (`1..=16`); MIDI pitches are `0..=127`.
+
+**Gate voices.** Each `voice_N` entry means "this voice listens to chain site `N`". The shorthand `voice_0 = 1` sets channel 1 with the default pitch; the full form `voice_0 = { channel = 1, pitch = 48 }` sets both. Voices that share a channel are mono — a new note retires the previous one. Voices on distinct channels are polyphonic.
+
+**Wall voices.** A named pool of channels. The allocator picks the next free channel round-robin when a wall is created; when the pool is full, the oldest active wall yields its channel. Delete `[chain_a.walls]` to disable wall output.
+
+**Clock.** A gate pulse on the configured channel every time the chain's mean magnetization crosses zero. In the locked phase this fires at a stable rate; near a phase boundary it becomes irregular; in the thermal phase it stops.
+
+**Physics.** A shared `[physics]` block applies to every chain that doesn't define its own `[chain_a.physics]` (or `[chain_b.physics]` once that exists). Per-chain blocks win when both are present.
+
+The loader validates the file before the program starts:
+
+- Channel numbers must be in 1..=16.
+- No channel can be claimed by more than one signal across gates, walls, and clock.
+- `voice_N` indices must correspond to real chain sites (`N < n_sites`).
+- Pitch and CC numbers must be in range.
+
+Errors name the offending entry exactly — e.g.
+
+```
+config error: channel 16 is assigned to both chain_a.gates.voice_3 and chain_a.clock
+```
 
 ---
 
@@ -69,27 +122,12 @@ The program watches the mean magnetization of the chain and emits a gate pulse e
 
 A domain wall is the boundary between adjacent sites with opposite spin direction. Walls exist as objects: they are born in pairs, drift along the chain, and annihilate in pairs. Their lifetime ranges from a few ticks (transient in the locked phase) to many drive periods (persistent walls in the partially-disordered regime).
 
-Each wall sounds as a held note on one of the wall channels, with note-on at birth and note-off at annihilation. Wall motion is reported in one of two ways:
+Each wall sounds as a held note on one of the wall channels, with note-on at birth and note-off at annihilation. Wall motion is reported in one of two ways, controlled by `repitch_on_move` in the config:
 
-- **Held pitch + CC** (default). The note holds a single pitch; a CC stream tracks the wall's current position. Patch this CC to filter cutoff, pan, or any other modulation destination on the receiving synth.
-- **Repitch on move** (`--wall-repitch-on-move`). Wall motion produces new note-on/note-off pairs as the position-derived pitch crosses semitone boundaries. Useful for hardware MIDI-to-CV interfaces where CC-to-modulation routing is inconvenient.
+- **Held pitch + CC** (default, `repitch_on_move = false`). The note holds a single pitch; a CC stream tracks the wall's current position. Patch this CC to filter cutoff, pan, or any other modulation destination on the receiving synth.
+- **Repitch on move** (`repitch_on_move = true`). Wall motion produces new note-on/note-off pairs as the position-derived pitch crosses semitone boundaries. Useful for hardware MIDI-to-CV interfaces where CC-to-modulation routing is inconvenient.
 
 When the number of active walls exceeds the available channels, the oldest active wall yields its channel to the new one.
-
----
-
-## Physics parameters
-
-These are not exposed on the CLI and live in `src/config.rs` as defaults on `PhysicsConfig`.
-
-| Parameter | Default | Effect |
-|---|---|---|
-| `n_sites` | `8` | Chain length. |
-| `eps` | `0.01` | Drive imperfection. Closer to 0 = tighter lock. |
-| `j` | `1.2` | Coupling strength between neighbors. |
-| `w` | `2.0` | Disorder width. Stabilizes the locked phase against thermal noise. |
-| `kt` | `0.1` | Effective temperature. Higher values eventually break the phase. |
-| `ticks_per_period` | `25` | Integration steps per drive period. |
 
 ---
 
@@ -97,11 +135,11 @@ These are not exposed on the CLI and live in `src/config.rs` as defaults on `Phy
 
 The OSC layer turns the program into a system that can be shaped in real time. An external program (TouchDesigner, a Python script, a custom controller) can write to the four mutable physics parameters while the simulation runs; the program publishes its internal state and events back over a second port.
 
-Both directions are opt-in. Without `--osc-listen` and `--osc-send`, no OSC threads start and the behavior is identical to running without the flags.
+Both directions are opt-in. Without `listen_port` and `send_address` in the `[osc]` section, no OSC threads start and the behavior is identical to running without them.
 
 ### Inbound parameter control
 
-When `--osc-listen <port>` is set, the program accepts messages on four addresses:
+When `listen_port` is set, the program accepts messages on four addresses:
 
 ```
 /physics/kt   float    effective temperature,  0.0 - 2.0
@@ -114,7 +152,7 @@ Out-of-range values are clamped silently. Parameter changes are smoothed over se
 
 ### Outbound events and state
 
-When `--osc-send <host:port>` is set, the program publishes two kinds of traffic.
+When `send_address` is set, the program publishes two kinds of traffic.
 
 **Events** fire once per occurrence:
 
@@ -138,10 +176,14 @@ Events and state that fire on the same tick are packed into a single OSC bundle 
 
 ### Typical invocation
 
+```toml
+[osc]
+listen_port = 9000
+send_address = "127.0.0.1:9001"
+```
+
 ```sh
-cargo run --release -- --port 1 \
-    --osc-listen 9000 \
-    --osc-send 127.0.0.1:9001
+cargo run --release -- --port 1
 ```
 
 The program listens for parameter writes on port 9000 and publishes to port 9001.
@@ -150,7 +192,7 @@ The program listens for parameter writes on port 9000 and publishes to port 9001
 
 ## OSC message reference
 
-**Inbound** (`--osc-listen` port):
+**Inbound** (`listen_port`):
 
 | Address | Arguments |
 |---|---|
@@ -159,7 +201,7 @@ The program listens for parameter writes on port 9000 and publishes to port 9001
 | `/physics/j` | float |
 | `/physics/w` | float |
 
-**Outbound events** (`--osc-send` destination):
+**Outbound events** (`send_address`):
 
 | Address | Arguments |
 |---|---|

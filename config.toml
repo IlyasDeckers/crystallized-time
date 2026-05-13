@@ -1,0 +1,59 @@
+# Crystallized Time — default configuration.
+#
+# Reproduces the program's pre-config-file defaults exactly. Edit from here.
+#
+# Channels are 1-based (1..=16). MIDI pitches are 0..=127.
+# Comment a section out (or delete it) to fall back to compiled defaults.
+
+[tempo]
+bpm = 120
+
+# OSC. Comment out listen_port / send_address to disable each side.
+# [osc]
+# listen_port = 9000
+# send_address = "127.0.0.1:9001"
+# state_rate_hz = 50
+# enable_state = true
+
+# Physics. Shared block — applies to every chain that doesn't define its
+# own [chain_x.physics]. With only one chain today, this is just "the
+# physics". When chain B arrives, either chain can override.
+[physics]
+kt = 0.1
+eps = 0.01
+j = 1.2
+w = 2.0
+n_sites = 8
+ticks_per_period = 25
+
+[chain_a]
+seed = 47
+
+# Gate voices. `voice_N` means "listen to chain site N". Default mapping:
+# sites 0, 2, 4, 6 all on channel 1, with a Cmaj7 voicing (C3, E3, G3, B3).
+# All four voices sharing one channel gives the historic OneChannelPerChain
+# behaviour — mono priority kicks in automatically when voices collide.
+[chain_a.gates]
+voice_0 = { channel = 1, pitch = 48 }    # C3
+voice_2 = { channel = 1, pitch = 52 }    # E3
+voice_4 = { channel = 1, pitch = 55 }    # G3
+voice_6 = { channel = 1, pitch = 59 }    # B3
+gate_length_ms = 50
+
+# Wall voice pool. Round-robin across these channels; voice stealing
+# (oldest active wall yields its channel) when the pool is exhausted.
+# Delete this whole section to disable wall output entirely.
+[chain_a.walls]
+voice_0 = 5
+voice_1 = 6
+voice_2 = 7
+voice_3 = 8
+pitch_low = 36          # C2
+pitch_high = 84         # C6
+motion_cc = 1           # 0 disables; 1 = mod wheel
+repitch_on_move = false
+
+# Substrate clock. Gates on channel 16 derived from the chain's mean
+# magnetization crossing zero.
+[chain_a.clock]
+channel = 16

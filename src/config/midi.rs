@@ -1,36 +1,34 @@
-//! MIDI output configuration — pitch assignments, channel routing,
-//! gate length, output topology.
-
-use super::OutputMode;
+//! MIDI output configuration — per-voice channel and pitch assignments,
+//! gate length.
+//!
+//! After the TOML-routing refactor there is no `OutputMode` enum: every
+//! gate voice is named individually in the config file, with its own
+//! channel and pitch. The old `OneChannelPerChain` mode is what you get
+//! by assigning all four voices to the same channel with distinct
+//! pitches; the old `ChannelPerSite` mode is what you get by assigning
+//! distinct channels and uniform pitch.
 
 /// MIDI output parameters.
 #[derive(Clone, Debug)]
 pub struct MidiConfig {
-    /// MIDI note pitch for ChannelPerSite mode (where pitch is irrelevant —
-    /// gate signals).
-    pub pitch: u8,
-    /// Per-voice MIDI pitches for OneChannelPerChain mode.
-    /// Length must match the number of output sites.
-    /// Default: Cmaj7 voicing (C3, E3, G3, B3).
+    /// Per-voice MIDI channels (0-15). Length must match `voice_pitches`
+    /// and the number of output sites.
+    pub voice_channels: Vec<u8>,
+    /// Per-voice MIDI pitches.
+    /// Default: Cmaj7 voicing (C3, E3, G3, B3) on a single channel.
     pub voice_pitches: Vec<u8>,
     /// Gate length in milliseconds (note-on to note-off delay).
     pub gate_length_ms: u64,
-    /// Base MIDI channel (0-15).
-    /// In OneChannelPerChain: chain's channel.
-    /// In ChannelPerSite: voice 0's channel; voice k goes to base_channel + k.
-    pub base_channel: u8,
-    /// Output topology.
-    pub mode: OutputMode,
 }
 
 impl Default for MidiConfig {
     fn default() -> Self {
         Self {
-            pitch: 48,
+            // All four voices on channel 1 (0-indexed 0), distinct pitches.
+            // Reproduces the previous OneChannelPerChain default behavior.
+            voice_channels: vec![0, 0, 0, 0],
             voice_pitches: vec![48, 52, 55, 59], // C3, E3, G3, B3 — Cmaj7
             gate_length_ms: 50,
-            base_channel: 0,
-            mode: OutputMode::default(),
         }
     }
 }

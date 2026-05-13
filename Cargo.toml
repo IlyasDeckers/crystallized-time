@@ -13,6 +13,9 @@ clap = { version = "4.5", features = ["derive"] }
 ctrlc = "3.4"
 arc-swap = "1.7"
 rosc = "0.10"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
 
 [profile.release]
 opt-level = 3

@@ -1,15 +1,15 @@
 //! MIDI voice allocation for domain walls.
 //!
 //! A wall is a voice with a physics-determined lifetime: born at a position
-//! (becoming a held note), possibly moving (Step 6 adds CC tracking), and
-//! ending only when the wall annihilates. This module maps WallEvents to
-//! note-on / note-off byte streams via MidiSender.
+//! (becoming a held note), possibly moving, and ending only when the wall
+//! annihilates. This module maps WallEvents to note-on / note-off byte
+//! streams via MidiSender.
 //!
-//! Voice allocation is round-robin across a configured channel range. Each
-//! wall is monophonic on its own channel — at most one wall at a time per
-//! channel. With up to 7 walls in an 8-site chain and 4 default channels,
-//! voice stealing is occasionally required; Step 7 adds that. For Step 5,
-//! a wall born when no channel is free is silently dropped.
+//! Voice allocation is round-robin across the configured channel list.
+//! Each wall is monophonic on its own channel — at most one wall at a
+//! time per channel. With up to 7 walls in an 8-site chain and 4 default
+//! channels, voice stealing is occasionally required (oldest active wall
+//! yields its channel).
 
 use crate::config::{PhysicsConfig, WallMidiConfig};
 use crate::midi::MidiSender;
@@ -27,20 +27,19 @@ pub struct WallVoiceAllocator {
     /// Number of sites in the chain — needed to map position to pitch.
     /// Cached at construction; doesn't change at runtime.
     n_sites: usize,
-    /// Active voices: wall_id -> (channel, pitch).
+    /// Active voices: wall_id -> ActiveVoice.
     active: HashMap<u64, ActiveVoice>,
-    /// Round-robin pointer for the next channel to try.
-    next_channel: u8,
+    /// Round-robin index into `config.channels` for the next channel to try.
+    next_idx: usize,
 }
 
 impl WallVoiceAllocator {
     pub fn new(config: WallMidiConfig, physics: &PhysicsConfig) -> Self {
-        let next_channel = config.channel_low;
         Self {
             config,
             n_sites: physics.n_sites,
             active: HashMap::new(),
-            next_channel,
+            next_idx: 0,
         }
     }
 
@@ -56,10 +55,21 @@ impl WallVoiceAllocator {
             WallEvent::Created { id, position, tick } => {
                 self.handle_created(*id, *position, *tick, sender, osc_sink);
             }
-            WallEvent::Destroyed { id, last_position, lifetime_ticks, .. } => {
+            WallEvent::Destroyed {
+                id,
+                last_position,
+                lifetime_ticks,
+                ..
+            } => {
                 self.handle_destroyed(*id, *last_position, *lifetime_ticks, sender, osc_sink);
             }
-            WallEvent::Moved { id, from, to, velocity, .. } => {
+            WallEvent::Moved {
+                id,
+                from,
+                to,
+                velocity,
+                ..
+            } => {
                 self.handle_moved(*id, *from, *to, *velocity, sender, osc_sink);
             }
         }
@@ -80,7 +90,12 @@ impl WallVoiceAllocator {
             self.handle_moved_cc(id, to, sender);
         }
         if let Some(sink) = osc_sink {
-            sink.push(crate::osc::OutboundEvent::WallMoved { id, from, to, velocity });
+            sink.push(crate::osc::OutboundEvent::WallMoved {
+                id,
+                from,
+                to,
+                velocity,
+            });
         }
     }
 
@@ -130,6 +145,12 @@ impl WallVoiceAllocator {
         sender: &MidiSender,
         osc_sink: Option<&mut crate::osc_io::OscSink>,
     ) {
+        // Empty channel list means walls are disabled (or weren't configured).
+        // The detector may still be emitting events; we drop them silently.
+        if self.config.channels.is_empty() {
+            return;
+        }
+
         let channel = match self.allocate_channel() {
             Some(c) => c,
             None => match self.steal_oldest(sender) {
@@ -151,10 +172,21 @@ impl WallVoiceAllocator {
         }
 
         sender.send_note_on(channel, pitch, velocity);
-        self.active.insert(id, ActiveVoice { channel, pitch, born_at_tick: tick });
+        self.active.insert(
+            id,
+            ActiveVoice {
+                channel,
+                pitch,
+                born_at_tick: tick,
+            },
+        );
 
         if let Some(sink) = osc_sink {
-            sink.push(crate::osc::OutboundEvent::WallCreated { id, position, channel });
+            sink.push(crate::osc::OutboundEvent::WallCreated {
+                id,
+                position,
+                channel,
+            });
         }
     }
 
@@ -191,35 +223,30 @@ impl WallVoiceAllocator {
         }
     }
 
-    /// Find a free channel in the configured range. Round-robin, starts from
-    /// `next_channel` and walks the range. Returns None if all are occupied.
+    /// Find a free channel in the configured list. Round-robin: starts from
+    /// `next_idx` and walks the list. Returns None if all are occupied.
     fn allocate_channel(&mut self) -> Option<u8> {
+        let pool = &self.config.channels;
+        if pool.is_empty() {
+            return None;
+        }
+
         let used: std::collections::HashSet<u8> =
             self.active.values().map(|v| v.channel).collect();
 
-        let range_size = (self.config.channel_high - self.config.channel_low + 1) as usize;
-        let mut tries = 0;
-        let mut ch = self.next_channel;
-
-        while tries < range_size {
+        // Walk at most `pool.len()` entries starting from next_idx.
+        for offset in 0..pool.len() {
+            let idx = (self.next_idx + offset) % pool.len();
+            let ch = pool[idx];
             if !used.contains(&ch) {
-                // Found one. Advance the pointer for next time.
-                self.next_channel = self.advance(ch);
+                // Advance the pointer to the slot after the one we took,
+                // so the next allocation picks up where we left off.
+                self.next_idx = (idx + 1) % pool.len();
                 return Some(ch);
             }
-            ch = self.advance(ch);
-            tries += 1;
         }
 
         None
-    }
-
-    fn advance(&self, ch: u8) -> u8 {
-        if ch >= self.config.channel_high {
-            self.config.channel_low
-        } else {
-            ch + 1
-        }
     }
 
     /// Map a wall position in [0.5, n_sites - 1.5] to a MIDI pitch in

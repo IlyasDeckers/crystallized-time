@@ -4,11 +4,16 @@
 //! (physics, events, MIDI output, tempo, clock, walls, OSC). The
 //! top-level `Config` here is the assembled bundle the program uses.
 //!
+//! `config_file` is the TOML deserialization front-end — it produces
+//! the same `Config` that the rest of the program already knows how
+//! to consume. See its module docs for the file schema.
+//!
 //! All public types are re-exported, so other modules import as
 //! `use crate::config::{Config, PhysicsConfig, ...};` regardless of
 //! which sub-module each type lives in.
 
 mod clock;
+pub mod config_file;
 mod events;
 mod midi;
 mod osc;
@@ -25,24 +30,6 @@ pub use physics::{
 };
 pub use tempo::TempoConfig;
 pub use walls::{WallConfig, WallMidiConfig};
-
-/// Output topology — how voices are routed to MIDI channels.
-///
-/// Lives at the top level rather than in `midi.rs` because it's
-/// referenced both by `MidiConfig` and by the CLI in `main.rs`.
-/// Keeping it here avoids `config::midi::OutputMode` paths and
-/// avoids a sibling import for a type the config tree owns.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub enum OutputMode {
-    OneChannelPerChain,
-    ChannelPerSite,
-}
-
-impl Default for OutputMode {
-    fn default() -> Self {
-        OutputMode::OneChannelPerChain
-    }
-}
 
 /// All configuration combined. The shape `main.rs` builds and that
 /// the simulation loop reads from.
