@@ -6,6 +6,7 @@
 //! period; outside the phase the clock degrades or stops, which is desired
 //! behavior — the clock dying is a real signature of leaving the phase.
 
+use crystallized_time::chain_id::ChainId;
 use crate::chain::SpinChain;
 use crate::config::ClockConfig;
 use crate::midi::MidiSender;
@@ -16,11 +17,14 @@ pub struct ClockEmitter {
     prev_m: f64,
     /// Tick of the last emitted pulse (for debouncing).
     last_pulse_tick: u64,
+
+    chain_id: ChainId,
 }
 
 impl ClockEmitter {
-    pub fn new(config: ClockConfig, chain: &SpinChain) -> Self {
+    pub fn new(config: ClockConfig, chain: &SpinChain, chain_id: ChainId) -> Self {
         Self {
+            chain_id,
             prev_m: chain.global_magnetization(),
             last_pulse_tick: 0,
             config,
@@ -60,6 +64,7 @@ impl ClockEmitter {
             );
             if let Some(sink) = osc_sink {
                 sink.push(crate::osc::OutboundEvent::ClockPulse {
+                    chain: ChainId::A,
                     magnetization: current_m,
                 });
             }

@@ -143,7 +143,7 @@ for tick in 1..=total_ticks {
     // NEW: drain MIDI input and perturb the chain.
     if let Some(input) = &midi_input {
         for msg in input.poll() {
-            if let Some((site, kind)) = router.route(msg, config.physics.n_sites) {
+            if let Some((site, kind)) = router.route(msg, config.chain_a.physics.n_sites) {
                 chain.perturb(site, kind);
             }
         }

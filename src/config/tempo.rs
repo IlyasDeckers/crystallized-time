@@ -15,7 +15,7 @@ impl TempoConfig {
         }
     }
 
-    pub fn bpm(&self) -> f64 {
+    pub fn _bpm(&self) -> f64 {
         60.0 / self.drive_period_secs
     }
 }

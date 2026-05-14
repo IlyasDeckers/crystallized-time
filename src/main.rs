@@ -1,7 +1,5 @@
-mod chain;
 mod cli;
 mod clock;
-mod config;
 mod events;
 mod midi;
 mod osc;
@@ -14,11 +12,12 @@ mod input;
 mod perturbation;
 
 use crate::cli::Cli;
+use crystallized_time::{chain, config};
 use crate::config::{config_file, Config, PhysicsTargets};
-use crate::runtime::Runtime;
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
+use crate::runtime::Runtime;
 
 fn main() {
     let cli = Cli::parse();
@@ -41,7 +40,7 @@ fn main() {
 
     let running = install_shutdown_handler();
 
-    let midi_sender = match midi::MidiSender::open(cli.port, config.midi.clone()) {
+    let midi_sender = match midi::MidiSender::open(cli.port, config.chain_a.midi.clone()) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Failed to open MIDI port: {}", e);
@@ -49,24 +48,30 @@ fn main() {
         }
     };
 
-    let targets = Arc::new(RwLock::new(PhysicsTargets::from_physics(&config.physics)));
-    let osc_sink = start_osc(&config, Arc::clone(&targets));
+    // let targets = Arc::new(RwLock::new(PhysicsTargets::from_physics(&config.chain_a.physics)));
+
     let (input_listener, perturbation_router) = open_input(&cli, &config);
-    
+    let targets_a = Arc::new(RwLock::new(PhysicsTargets::from_physics(&config.chain_a.physics)));
+    let targets_b = config.chain_b.as_ref().map(|b| {
+        Arc::new(RwLock::new(PhysicsTargets::from_physics(&b.physics)))
+    });
+    let osc_sink = start_osc(&config, Arc::clone(&targets_a));
+
     let mut runtime = Runtime::build(
         &config,
         midi_sender,
         osc_sink,
-        targets,
+        targets_a,
+        targets_b,
         input_listener,
         perturbation_router,
     );
 
     let total_ticks =
-        cli.periods.unwrap_or(20_000) * config.physics.ticks_per_period as u64;
+        cli.periods.unwrap_or(20_000) * config.chain_a.physics.ticks_per_period as u64;
     println!(
         "Running for {} drive periods...",
-        total_ticks / config.physics.ticks_per_period as u64
+        total_ticks / config.chain_a.physics.ticks_per_period as u64
     );
 
     runtime.run_until(total_ticks, &running);
@@ -161,10 +166,13 @@ fn open_input(
 
 fn start_osc(
     config: &Config,
-    targets: Arc<RwLock<PhysicsTargets>>,
+    targets_a: Arc<RwLock<PhysicsTargets>>,
+    // TODO Step 6: also accept targets_b and split inbound routing
+    // between /a/physics/* and /b/physics/*. For now, /physics/*
+    // writes to chain_a only.
 ) -> Option<osc_io::OscSink> {
     if let Some(port) = config.osc.listen_port {
-        match osc_io::spawn_receiver(port, targets) {
+        match osc_io::spawn_receiver(port, targets_a) {
             Ok(bound) => println!("OSC: listening on port {}", bound),
             Err(e) => {
                 eprintln!("Failed to bind OSC listener on port {}: {}", port, e);

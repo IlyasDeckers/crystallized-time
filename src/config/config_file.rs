@@ -57,11 +57,7 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use super::{
-    ClockConfig, Config, EventConfig, InputConfig, MidiConfig, OscConfig,
-    PerturbationConfig, PerturbationKindConfig, PhysicsConfig, TempoConfig,
-    WallConfig, WallMidiConfig,
-};
+use super::{ChainConfig, ClockConfig, Config, EventConfig, InputConfig, MidiConfig, OscConfig, PerturbationConfig, PerturbationKindConfig, PhysicsConfig, TempoConfig, WallConfig, WallMidiConfig};
 
 // --- Public API ------------------------------------------------------------
 
@@ -126,12 +122,10 @@ pub fn load(path: &Path) -> Result<Config, ConfigError> {
 struct TomlConfig {
     tempo: Option<TempoSection>,
     osc: Option<OscSection>,
-    /// Optional shared physics block. When `chain_a.physics` is absent,
-    /// this is what the single chain uses. When both are absent, the
-    /// program defaults apply.
     physics: Option<PhysicsSection>,
     input: Option<InputSection>,
     chain_a: ChainSection,
+    chain_b: Option<ChainSection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -173,6 +167,7 @@ struct PhysicsSection {
     n_sites: Option<usize>,
     ticks_per_period: Option<u32>,
     dt: Option<f64>,
+    kick_angle: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -237,69 +232,37 @@ struct ClockSection {
 
 impl TomlConfig {
     fn into_config(self) -> Result<Config, ConfigError> {
-        // Tempo. Default to TempoConfig::default() if the section is missing.
         let tempo = match self.tempo {
             Some(t) => TempoConfig::from_bpm(t.bpm),
             None => TempoConfig::default(),
         };
-
-        // OSC. Each field falls back to OscConfig::default().
         let osc = build_osc(self.osc);
 
-        // Physics. Per-chain block wins; falls back to the shared block;
-        // falls back to PhysicsConfig::default().
-        let physics_section = self.chain_a.physics.clone().or(self.physics.clone());
-        let physics = build_physics(physics_section);
+        let shared_physics = self.physics.as_ref();
 
-        // Seed.
-        let seed = self.chain_a.seed.unwrap_or(47);
+        let (chain_a, claims_a) = build_chain(&self.chain_a, "chain_a", shared_physics)?;
 
-        // Gates: sort voices by their `voice_N` index, then build parallel
-        // channel/pitch vecs.
-        let (midi, gate_channels_used) = build_midi(&self.chain_a.gates)?;
-
-        // Walls: same approach. Returns the channels actually claimed for
-        // duplicate-detection.
-        let (walls, wall_midi, wall_channels_used) =
-            build_walls(self.chain_a.walls.as_ref())?;
-
-        // Clock.
-        let clock = build_clock(&self.chain_a.clock)?;
-
-        // Event detection follows the gate voices: one output site per
-        // gate voice. Indices come from the voice_N names.
-        let events = build_events(&self.chain_a.gates)?;
+        let (chain_b, claims_b) = match &self.chain_b {
+            Some(section) => {
+                let (cfg, claims) = build_chain(section, "chain_b", shared_physics)?;
+                (Some(cfg), claims)
+            }
+            None => (None, Vec::new()),
+        };
 
         let input = build_input(self.input)?;
 
-        // Duplicate-channel validation across every claimed channel.
-        validate_no_duplicates(
-            &gate_channels_used,
-            &wall_channels_used,
-            clock.channel,
-        )?;
-
-        // Sanity: every gate voice's site index must be < n_sites.
-        for &site in &events.output_sites {
-            if site >= physics.n_sites {
-                return Err(ConfigError::Validation(format!(
-                    "gate voice_{} refers to a site index that doesn't exist (n_sites = {})",
-                    site, physics.n_sites
-                )));
-            }
-        }
+        // Combined duplicate-channel validation across both chains.
+        let mut all_claims = claims_a;
+        all_claims.extend(claims_b);
+        validate_no_duplicates(&all_claims)?;
 
         Ok(Config {
-            physics,
-            events,
-            midi,
+            chain_a,
+            chain_b,
             tempo,
-            clock,
-            walls,
-            wall_midi,
             osc,
             input,
-            seed,
         })
     }
 }
@@ -383,29 +346,31 @@ fn build_physics(section: Option<PhysicsSection>) -> PhysicsConfig {
         n_sites: s.n_sites.unwrap_or(defaults.n_sites),
         ticks_per_period: s.ticks_per_period.unwrap_or(defaults.ticks_per_period),
         dt: s.dt.unwrap_or(defaults.dt),
+        kick_angle: s.kick_angle.unwrap_or(defaults.kick_angle),
     }
 }
 
 /// Build `MidiConfig` from `[chain_a.gates]`. Returns the config plus
 /// the list of (voice_index, channel) pairs claimed, for the duplicate
 /// validator.
-fn build_midi(section: &GatesSection) -> Result<(MidiConfig, Vec<ChannelClaim>), ConfigError> {
+fn build_midi(
+    section: &GatesSection,
+    chain_label: &str,
+) -> Result<(MidiConfig, Vec<ChannelClaim>), ConfigError> {
     let defaults = MidiConfig::default();
-    let sorted = parse_voice_indices(&section.voices, "gates")?;
+    let sorted = parse_voice_indices(&section.voices, &format!("{}.gates", chain_label))?;
 
     if sorted.is_empty() {
-        return Err(ConfigError::Validation(
-            "chain_a.gates must define at least one voice_N".to_string(),
-        ));
+        return Err(ConfigError::Validation(format!(
+            "{}.gates must define at least one voice_N",
+            chain_label
+        )));
     }
 
     let mut voice_channels = Vec::with_capacity(sorted.len());
     let mut voice_pitches = Vec::with_capacity(sorted.len());
     let mut claims = Vec::with_capacity(sorted.len());
 
-    // Default pitches fall back to the Cmaj7 voicing for voice_0..voice_3;
-    // beyond that we have no opinion, and using C3 for all extras is a
-    // boring but well-defined choice.
     let default_pitches: &[u8] = &defaults.voice_pitches;
 
     for (idx, name, entry) in sorted {
@@ -414,7 +379,8 @@ fn build_midi(section: &GatesSection) -> Result<(MidiConfig, Vec<ChannelClaim>),
             GateVoiceEntry::Full { channel, pitch } => (*channel, *pitch),
         };
 
-        let channel_0b = validate_channel_1based(channel_1b, &format!("chain_a.gates.{}", name))?;
+        let label = format!("{}.gates.{}", chain_label, name);
+        let channel_0b = validate_channel_1based(channel_1b, &label)?;
         let pitch = pitch
             .or_else(|| default_pitches.get(idx).copied())
             .unwrap_or(48);
@@ -423,7 +389,7 @@ fn build_midi(section: &GatesSection) -> Result<(MidiConfig, Vec<ChannelClaim>),
         voice_pitches.push(pitch);
         claims.push(ChannelClaim {
             channel: channel_0b,
-            label: format!("chain_a.gates.{}", name),
+            label,
         });
     }
 
@@ -438,14 +404,11 @@ fn build_midi(section: &GatesSection) -> Result<(MidiConfig, Vec<ChannelClaim>),
 
 fn build_walls(
     section: Option<&WallsSection>,
+    chain_label: &str,
 ) -> Result<(WallConfig, WallMidiConfig, Vec<ChannelClaim>), ConfigError> {
     let wall_defaults = WallConfig::default();
     let midi_defaults = WallMidiConfig::default();
 
-    // No [chain_a.walls] table at all → walls disabled. Detection still
-    // runs (cheap), but the channels list is empty so the allocator
-    // silently drops every wall event. Effectively the same as
-    // `walls.enabled = false`, which we set here for clarity.
     let Some(s) = section else {
         return Ok((
             WallConfig { enabled: false, ..wall_defaults },
@@ -454,17 +417,18 @@ fn build_walls(
         ));
     };
 
-    let sorted = parse_voice_indices(&s.voices, "walls")?;
+    let sorted = parse_voice_indices(&s.voices, &format!("{}.walls", chain_label))?;
 
     let mut channels = Vec::with_capacity(sorted.len());
     let mut claims = Vec::with_capacity(sorted.len());
     for (_idx, name, entry) in sorted {
         let WallVoiceEntry::Channel(c) = entry;
-        let channel_0b = validate_channel_1based(*c, &format!("chain_a.walls.{}", name))?;
+        let claim_label = format!("{}.walls.{}", chain_label, name);
+        let channel_0b = validate_channel_1based(*c, &claim_label)?;
         channels.push(channel_0b);
         claims.push(ChannelClaim {
             channel: channel_0b,
-            label: format!("chain_a.walls.{}", name),
+            label: claim_label,
         });
     }
 
@@ -473,8 +437,8 @@ fn build_walls(
         Some(n) if n <= 127 => Some(n),
         Some(n) => {
             return Err(ConfigError::Validation(format!(
-                "chain_a.walls.motion_cc must be in 0..=127 (got {})",
-                n
+                "{}.walls.motion_cc must be in 0..=127 (got {})",
+                chain_label, n
             )));
         }
         None => midi_defaults.motion_cc,
@@ -484,18 +448,17 @@ fn build_walls(
     let pitch_high = s.pitch_high.unwrap_or(midi_defaults.pitch_high);
     if pitch_low > 127 || pitch_high > 127 {
         return Err(ConfigError::Validation(format!(
-            "chain_a.walls pitch range must be in 0..=127 (got {}..{})",
-            pitch_low, pitch_high
+            "{}.walls pitch range must be in 0..=127 (got {}..{})",
+            chain_label, pitch_low, pitch_high
         )));
     }
     if pitch_low > pitch_high {
         return Err(ConfigError::Validation(format!(
-            "chain_a.walls pitch_low must be <= pitch_high (got {} > {})",
-            pitch_low, pitch_high
+            "{}.walls pitch_low must be <= pitch_high (got {} > {})",
+            chain_label, pitch_low, pitch_high
         )));
     }
 
-    // No walls voices listed → equivalent to walls disabled.
     let enabled = !channels.is_empty();
 
     let wall_midi = WallMidiConfig {
@@ -514,9 +477,15 @@ fn build_walls(
     Ok((walls, wall_midi, claims))
 }
 
-fn build_clock(section: &ClockSection) -> Result<ClockConfig, ConfigError> {
+fn build_clock(
+    section: &ClockSection,
+    chain_label: &str,
+) -> Result<ClockConfig, ConfigError> {
     let defaults = ClockConfig::default();
-    let channel_0b = validate_channel_1based(section.channel, "chain_a.clock.channel")?;
+    let channel_0b = validate_channel_1based(
+        section.channel,
+        &format!("{}.clock.channel", chain_label),
+    )?;
     Ok(ClockConfig {
         enabled: section.enabled.unwrap_or(defaults.enabled),
         channel: channel_0b,
@@ -527,19 +496,61 @@ fn build_clock(section: &ClockSection) -> Result<ClockConfig, ConfigError> {
     })
 }
 
-fn build_events(section: &GatesSection) -> Result<EventConfig, ConfigError> {
+fn build_events(
+    section: &GatesSection,
+    chain_label: &str,
+) -> Result<EventConfig, ConfigError> {
     let defaults = EventConfig::default();
-    let sorted = parse_voice_indices(&section.voices, "gates")?;
-    // The voice index N in `voice_N` is interpreted as the chain site
-    // index the voice listens to. So `voice_0`, `voice_2`, `voice_4`,
-    // `voice_6` produces output_sites = [0, 2, 4, 6] — matching the
-    // historical default.
+    let sorted = parse_voice_indices(&section.voices, &format!("{}.gates", chain_label))?;
     let output_sites: Vec<usize> = sorted.iter().map(|(idx, _, _)| *idx).collect();
     Ok(EventConfig {
         output_sites,
         crossing_threshold: defaults.crossing_threshold,
         debounce_ticks: defaults.debounce_ticks,
     })
+}
+
+fn build_chain(
+    section: &ChainSection,
+    label: &str,
+    shared_physics: Option<&PhysicsSection>,
+) -> Result<(ChainConfig, Vec<ChannelClaim>), ConfigError> {
+    let physics_section = section.physics.as_ref().or(shared_physics);
+    let physics = build_physics(physics_section.cloned());
+    let seed = section.seed.unwrap_or(47);
+
+    let (midi, gate_claims) = build_midi(&section.gates, label)?;
+    let (walls, wall_midi, wall_claims) = build_walls(section.walls.as_ref(), label)?;
+    let clock = build_clock(&section.clock, label)?;
+    let events = build_events(&section.gates, label)?;
+
+    for &site in &events.output_sites {
+        if site >= physics.n_sites {
+            return Err(ConfigError::Validation(format!(
+                "{}.gates: voice_{} refers to a site index that doesn't exist (n_sites = {})",
+                label, site, physics.n_sites
+            )));
+        }
+    }
+
+    let mut claims = gate_claims;
+    claims.extend(wall_claims);
+    claims.push(ChannelClaim {
+        channel: clock.channel,
+        label: format!("{}.clock", label),
+    });
+
+    let chain_cfg = ChainConfig {
+        physics,
+        events,
+        midi,
+        clock,
+        walls,
+        wall_midi,
+        seed,
+    };
+
+    Ok((chain_cfg, claims))
 }
 
 // --- Helpers ---------------------------------------------------------------
@@ -563,13 +574,13 @@ fn parse_voice_indices<'a, V>(
     for (name, value) in map.iter() {
         let Some(suffix) = name.strip_prefix("voice_") else {
             return Err(ConfigError::Validation(format!(
-                "chain_a.{}: unrecognized key '{}' (expected 'voice_N')",
+                "{}: unrecognized key '{}' (expected 'voice_N')",
                 section_label, name
             )));
         };
         let idx: usize = suffix.parse().map_err(|_| {
             ConfigError::Validation(format!(
-                "chain_a.{}: voice key '{}' has non-numeric suffix",
+                "{}: voice key '{}' has non-numeric suffix",
                 section_label, name
             ))
         })?;
@@ -595,36 +606,20 @@ fn validate_channel_1based(channel_1b: u8, label: &str) -> Result<u8, ConfigErro
 /// Final pass: assert that no two signals across the whole config want
 /// the same MIDI channel. Names both claimants in the error message,
 /// matching the spec's example exactly.
-fn validate_no_duplicates(
-    gate_claims: &[ChannelClaim],
-    wall_claims: &[ChannelClaim],
-    clock_channel: u8,
-) -> Result<(), ConfigError> {
+fn validate_no_duplicates(claims: &[ChannelClaim]) -> Result<(), ConfigError> {
     let mut owners: HashMap<u8, String> = HashMap::new();
 
-    let mut register = |claim: &ChannelClaim| -> Result<(), ConfigError> {
+    for claim in claims {
         if let Some(prior) = owners.get(&claim.channel) {
             return Err(ConfigError::Validation(format!(
                 "channel {} is assigned to both {} and {}",
                 claim.channel + 1,
                 prior,
-                claim.label
+                claim.label,
             )));
         }
         owners.insert(claim.channel, claim.label.clone());
-        Ok(())
-    };
-
-    for c in gate_claims {
-        register(c)?;
     }
-    for c in wall_claims {
-        register(c)?;
-    }
-    register(&ChannelClaim {
-        channel: clock_channel,
-        label: "chain_a.clock".to_string(),
-    })?;
 
     Ok(())
 }
@@ -660,13 +655,13 @@ mod tests {
         "#;
         let config = load_str(toml).expect("should parse");
         assert_eq!(config.seed, 7);
-        assert_eq!(config.midi.voice_channels, vec![0, 1, 2, 3]);
-        assert_eq!(config.events.output_sites, vec![0, 2, 4, 6]);
+        assert_eq!(config.chain_a.midi.voice_channels, vec![0, 1, 2, 3]);
+        assert_eq!(config.chain_a.events.output_sites, vec![0, 2, 4, 6]);
         // Clock channel was 16 (1-based) → 15 (0-based)
-        assert_eq!(config.clock.channel, 15);
+        assert_eq!(config.chain_a.clock.channel, 15);
         // No walls section → walls disabled, empty channel list
-        assert!(!config.walls.enabled);
-        assert!(config.wall_midi.channels.is_empty());
+        assert!(!config.chain_a.walls.enabled);
+        assert!(config.chain_a.wall_midi.channels.is_empty());
     }
 
     #[test]
@@ -680,9 +675,9 @@ mod tests {
             channel = 16
         "#;
         let config = load_str(toml).expect("should parse");
-        assert_eq!(config.midi.voice_pitches[0], 60);
+        assert_eq!(config.chain_a.midi.voice_pitches[0], 60);
         // voice_1 fell back to the default-pitch table at index 1 (E3, MIDI 52)
-        assert_eq!(config.midi.voice_pitches[1], 52);
+        assert_eq!(config.chain_a.midi.voice_pitches[1], 52);
     }
 
     #[test]
@@ -779,7 +774,7 @@ mod tests {
             channel = 16
         "#;
         let config = load_str(toml).expect("should parse");
-        assert!((config.physics.kt - 0.5).abs() < 1e-9);
+        assert!((config.chain_a.physics.kt - 0.5).abs() < 1e-9);
     }
 
     #[test]
@@ -795,7 +790,7 @@ mod tests {
             channel = 16
         "#;
         let config = load_str(toml).expect("should parse");
-        assert!((config.physics.kt - 0.42).abs() < 1e-9);
+        assert!((config.chain_a.physics.kt - 0.42).abs() < 1e-9);
     }
 
     #[test]

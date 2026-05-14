@@ -37,14 +37,20 @@ pub use walls::{WallConfig, WallMidiConfig};
 /// the simulation loop reads from.
 #[derive(Clone, Debug, Default)]
 pub struct Config {
+    pub chain_a: ChainConfig,
+    pub chain_b: Option<ChainConfig>,
+    pub tempo: TempoConfig,
+    pub osc: OscConfig,
+    pub input: Option<InputConfig>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ChainConfig {
     pub physics: PhysicsConfig,
     pub events: EventConfig,
     pub midi: MidiConfig,
-    pub tempo: TempoConfig,
     pub clock: ClockConfig,
     pub walls: WallConfig,
     pub wall_midi: WallMidiConfig,
-    pub osc: OscConfig,
-    pub input: Option<InputConfig>,
     pub seed: u64,
 }

@@ -21,6 +21,7 @@ use std::thread;
 use crate::osc::{serialize_bundle, OutboundEvent};
 use std::net::SocketAddr;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
+use crystallized_time::chain_id::ChainId;
 
 /// One tick's worth of outbound events, bundled together for the sender
 /// thread. Aliased for readability at the call sites that move these
@@ -203,6 +204,7 @@ impl OscSink {
     /// number of currently-active walls.
     pub fn push_state_if_due(
         &mut self,
+        chain: ChainId,
         spins: &[f64],
         magnetization: f64,
         wall_count: usize,
@@ -216,15 +218,15 @@ impl OscSink {
         if now.duration_since(throttle.last_send) < throttle.min_interval {
             return;
         }
-        
+
         let values: Vec<f32> = spins.iter().map(|v| *v as f32).collect();
-        self.staging.push(OutboundEvent::StateSpins { values });
+        self.staging.push(OutboundEvent::StateSpins { chain, values });
         self.staging.push(OutboundEvent::StateMagnetization {
+            chain,
             magnetization: magnetization as f32,
         });
-        // Wall counts beyond i32::MAX are unreachable in practice (chain
-        // has at most n_sites - 1 walls), but the cast is bounded anyway.
         self.staging.push(OutboundEvent::StateWallCount {
+            chain,
             count: wall_count.min(i32::MAX as usize) as i32,
         });
 

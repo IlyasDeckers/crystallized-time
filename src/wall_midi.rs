@@ -15,6 +15,7 @@ use crate::config::{PhysicsConfig, WallMidiConfig};
 use crate::midi::MidiSender;
 use crate::walls::WallEvent;
 use std::collections::HashMap;
+use crystallized_time::chain_id::ChainId;
 
 struct ActiveVoice {
     channel: u8,
@@ -31,12 +32,15 @@ pub struct WallVoiceAllocator {
     active: HashMap<u64, ActiveVoice>,
     /// Round-robin index into `config.channels` for the next channel to try.
     next_idx: usize,
+
+    chain_id: ChainId,
 }
 
 impl WallVoiceAllocator {
-    pub fn new(config: WallMidiConfig, physics: &PhysicsConfig) -> Self {
+    pub fn new(config: WallMidiConfig, physics: &PhysicsConfig, chain_id: ChainId) -> Self {
         Self {
             config,
+            chain_id,
             n_sites: physics.n_sites,
             active: HashMap::new(),
             next_idx: 0,
@@ -91,6 +95,7 @@ impl WallVoiceAllocator {
         }
         if let Some(sink) = osc_sink {
             sink.push(crate::osc::OutboundEvent::WallMoved {
+                chain: ChainId::A,
                 id,
                 from,
                 to,
@@ -183,6 +188,7 @@ impl WallVoiceAllocator {
 
         if let Some(sink) = osc_sink {
             sink.push(crate::osc::OutboundEvent::WallCreated {
+                chain: ChainId::A,
                 id,
                 position,
                 channel,
@@ -216,6 +222,7 @@ impl WallVoiceAllocator {
         }
         if let Some(sink) = osc_sink {
             sink.push(crate::osc::OutboundEvent::WallDestroyed {
+                chain: ChainId::A,
                 id,
                 last_position,
                 lifetime_ticks,

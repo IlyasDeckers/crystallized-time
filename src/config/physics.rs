@@ -19,6 +19,10 @@ pub struct PhysicsConfig {
     /// Number of integration ticks per drive period.
     /// 25 by default — chosen so dt * ticks_per_period = 1.0 sim time unit.
     pub ticks_per_period: u32,
+    /// Base angle for the periodic kick, in radians. The actual rotation
+    /// applied is (1 - eps) * kick_angle. Default pi (period-2 dynamics).
+    /// Set to 2*pi/3 to target period-3, pi/2 for period-4, etc.
+    pub kick_angle: f64,
 }
 
 impl Default for PhysicsConfig {
@@ -31,6 +35,7 @@ impl Default for PhysicsConfig {
             w: 2.0,
             kt: 0.1,
             ticks_per_period: 25,
+            kick_angle: std::f64::consts::PI,
         }
     }
 }

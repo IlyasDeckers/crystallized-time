@@ -20,3 +20,11 @@ toml = "0.8"
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+[[bin]]
+name = "crystallized_time"
+path = "src/main.rs"
+
+[[bin]]
+name = "sweep"
+path = "src/bin/sweep.rs"

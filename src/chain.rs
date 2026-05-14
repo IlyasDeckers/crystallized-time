@@ -251,14 +251,14 @@ impl SpinChain {
 
         self.tick += 1;
         if self.tick > 0 && self.tick % snapshot.ticks_per_period as u64 == 0 {
-            self.apply_drive_pulse(snapshot.eps);
+            self.apply_drive_pulse(snapshot.eps, snapshot.kick_angle);
         }
     }
 
     /// Apply the (1 - eps) * pi rotation around the x-axis to every spin.
     /// This is the periodic Floquet kick that produces period-doubling.
-    fn apply_drive_pulse(&mut self, eps: f64) {
-        let angle = (1.0 - eps) * std::f64::consts::PI;
+    fn apply_drive_pulse(&mut self, eps: f64, base_angle: f64) {
+        let angle = (1.0 - eps) * base_angle;
         let c = angle.cos();
         let si = angle.sin();
 
