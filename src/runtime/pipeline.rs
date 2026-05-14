@@ -43,6 +43,7 @@ impl ChainPipeline {
         id: ChainId,
         physics: PhysicsConfig,
         events_cfg: crystallized_time::config::EventConfig,
+        midi_cfg: crystallized_time::config::MidiConfig,
         clock_cfg: crystallized_time::config::ClockConfig,
         walls_cfg: crystallized_time::config::WallConfig,
         wall_midi_cfg: crystallized_time::config::WallMidiConfig,
@@ -57,7 +58,7 @@ impl ChainPipeline {
         let physics_arc = Arc::new(ArcSwap::from_pointee(physics.clone()));
         let chain = SpinChain::new(Arc::clone(&physics_arc), &mut rng);
 
-        let detector = EventDetector::new(events_cfg, &chain);
+        let detector = EventDetector::new(events_cfg, midi_cfg, &chain);
         let clock_emitter = ClockEmitter::new(clock_cfg, &chain, id);
         let wall_detector = WallDetector::new(walls_cfg);
         let wall_voicer = WallVoiceAllocator::new(wall_midi_cfg, &physics, id);

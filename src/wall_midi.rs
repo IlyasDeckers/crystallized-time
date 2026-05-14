@@ -95,7 +95,7 @@ impl WallVoiceAllocator {
         }
         if let Some(sink) = osc_sink {
             sink.push(crate::osc::OutboundEvent::WallMoved {
-                chain: ChainId::A,
+                chain: self.chain_id,
                 id,
                 from,
                 to,
@@ -188,7 +188,7 @@ impl WallVoiceAllocator {
 
         if let Some(sink) = osc_sink {
             sink.push(crate::osc::OutboundEvent::WallCreated {
-                chain: ChainId::A,
+                chain: self.chain_id,
                 id,
                 position,
                 channel,
@@ -222,7 +222,7 @@ impl WallVoiceAllocator {
         }
         if let Some(sink) = osc_sink {
             sink.push(crate::osc::OutboundEvent::WallDestroyed {
-                chain: ChainId::A,
+                chain: self.chain_id,
                 id,
                 last_position,
                 lifetime_ticks,

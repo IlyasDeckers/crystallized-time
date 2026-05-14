@@ -64,7 +64,7 @@ impl ClockEmitter {
             );
             if let Some(sink) = osc_sink {
                 sink.push(crate::osc::OutboundEvent::ClockPulse {
-                    chain: ChainId::A,
+                    chain: self.chain_id,
                     magnetization: current_m,
                 });
             }

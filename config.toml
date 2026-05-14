@@ -6,7 +6,7 @@
 # Comment a section out (or delete it) to fall back to compiled defaults.
 
 [tempo]
-bpm = 34
+bpm = 17
 
 # OSC. Comment out listen_port / send_address to disable each side.
 [osc]
@@ -17,10 +17,10 @@ enable_state = true
 
 # Physics. applies to every chain that doesn't define its own [chain_x.physics].
 [chain_a]
-seed = 100
+seed = 47
 
 [chain_a.physics]
-kt = 0.01
+kt = 0.1
 eps = 0.01
 j = 1.2
 w = 2.0
@@ -31,7 +31,7 @@ ticks_per_period = 25
 seed = 83
 
 [chain_b.physics]
-kt = 0.05
+kt = 0.9
 eps = 0.17
 j = 0.10
 w = 1.5
@@ -67,7 +67,7 @@ voice_3 = 8
 pitch_low = 36          # C2
 pitch_high = 60         # C6
 motion_cc = 1           # 0 disables; 1 = mod wheel
-repitch_on_move = false
+repitch_on_move = true
 
 # Clock
 [chain_a.clock]

@@ -65,34 +65,12 @@ impl MidiSender {
     /// interact, which reproduces the historic ChannelPerSite behavior
     /// without a mode flag.
     pub fn send_gate(&self, event: GateEvent) {
-        let voice = event.voice as usize;
-
-        // Look up channel and pitch from the parallel vecs. If the event
-        // refers to a voice the config doesn't define (shouldn't happen
-        // post-loader, but guard anyway), drop silently — better than
-        // panicking in the realtime path.
-        let channel = match self.config.voice_channels.get(voice) {
-            Some(&c) if c <= 15 => c,
-            _ => {
-                eprintln!(
-                    "warning: voice {} has no valid channel (config has {} entries)",
-                    event.voice,
-                    self.config.voice_channels.len()
-                );
-                return;
-            }
-        };
-        let pitch = match self.config.voice_pitches.get(voice) {
-            Some(&p) => p,
-            None => {
-                eprintln!(
-                    "warning: voice {} has no pitch defined (config has {} entries)",
-                    event.voice,
-                    self.config.voice_pitches.len()
-                );
-                return;
-            }
-        };
+        let channel = event.channel;
+        if channel > 15 {
+            eprintln!("warning: invalid channel {} on gate event", channel);
+            return;
+        }
+        let pitch = event.pitch;
 
         if let Ok(mut used) = self.used_channels.lock() {
             used.insert(channel);
@@ -100,9 +78,6 @@ impl MidiSender {
 
         let velocity = (event.intensity * 127.0).clamp(1.0, 127.0) as u8;
 
-        // Mono priority per channel: if something's already sounding on
-        // this channel, retire it before sending the new note-on. Voices
-        // on distinct channels never trip this branch.
         if let Ok(mut sounding) = self.sounding.lock() {
             if let Some(prior_pitch) = sounding[channel as usize].take() {
                 let prior_off = [0x80 | channel, prior_pitch, 0];
