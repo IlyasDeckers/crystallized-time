@@ -2,7 +2,7 @@
 
 *Companion specification to `stage_1_2_spec.md`, `stage_2-5_spec.md`, `domain_walls_spec.md`, and `stage_3_plus_reference.md`. Implementation spec — replaces the framework's lighter Stage 4 sketch with a TouchDesigner-targeted version using OSC as the sole external control protocol.*
 
-`Status: planned. Implement next.`
+`Status: Done.`
 
 ---
 

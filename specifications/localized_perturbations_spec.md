@@ -2,7 +2,7 @@
 
 *Companion specification to `stage_1_2_spec.md`, `stage_2-5_spec.md`, and `stage_3_plus_reference.md`. Parking spec — research direction, not a commitment.*
 
-`Status: in progress.`
+`Status: Done.`
 
 ---
 
