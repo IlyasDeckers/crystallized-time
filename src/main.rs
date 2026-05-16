@@ -17,7 +17,7 @@ use crate::config::{config_file, Config, PhysicsTargets};
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use crate::runtime::Runtime;
+use crate::runtime::{CouplingTargets, Runtime};
 
 fn main() {
     let cli = Cli::parse();
@@ -55,7 +55,18 @@ fn main() {
     let targets_b = config.chain_b.as_ref().map(|b| {
         Arc::new(RwLock::new(PhysicsTargets::from_physics(&b.physics)))
     });
-    let osc_sink = start_osc(&config, Arc::clone(&targets_a));
+
+    let coupling_targets = match (&config.coupling, &config.chain_b) {
+        (Some(c), Some(_)) => Some(Arc::new(RwLock::new(CouplingTargets::from_config(c)))),
+        _ => None,
+    };
+
+    let osc_targets = osc_io::OscTargets::new(
+        Arc::clone(&targets_a),
+        targets_b.as_ref().map(Arc::clone),
+        coupling_targets.as_ref().map(Arc::clone),
+    );
+    let osc_sink = start_osc(&config, osc_targets);
 
     let mut runtime = Runtime::build(
         &config,
@@ -63,6 +74,7 @@ fn main() {
         osc_sink,
         targets_a,
         targets_b,
+        coupling_targets,
         input_listener,
         perturbation_router,
     );
@@ -166,13 +178,10 @@ fn open_input(
 
 fn start_osc(
     config: &Config,
-    targets_a: Arc<RwLock<PhysicsTargets>>,
-    // TODO Step 6: also accept targets_b and split inbound routing
-    // between /a/physics/* and /b/physics/*. For now, /physics/*
-    // writes to chain_a only.
+    targets: osc_io::OscTargets,
 ) -> Option<osc_io::OscSink> {
     if let Some(port) = config.osc.listen_port {
-        match osc_io::spawn_receiver(port, targets_a) {
+        match osc_io::spawn_receiver(port, targets) {
             Ok(bound) => println!("OSC: listening on port {}", bound),
             Err(e) => {
                 eprintln!("Failed to bind OSC listener on port {}: {}", port, e);

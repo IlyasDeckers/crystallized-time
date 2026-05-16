@@ -164,3 +164,10 @@ pub fn apply_smoothing(
     next.w   = new_w;
     Some(next)
 }
+
+/// Move a single scalar one tick's worth toward its target, using the
+/// supplied alpha. Used for non-`PhysicsConfig` parameters that share
+/// the same exponential-smoothing model — coupling strengths, etc.
+pub fn apply_smoothing_to_f64(current: f64, target: f64, alpha: f64) -> f64 {
+    current + (target - current) * alpha
+}

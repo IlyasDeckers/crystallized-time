@@ -10,10 +10,14 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 mod pipeline;
+mod coupling;
+
 use pipeline::ChainPipeline;
+pub use coupling::{CouplingState, CouplingTargets};
 
 pub struct Runtime {
     pipelines: Vec<ChainPipeline>,
+    coupling: Option<CouplingState>,
     midi_sender: MidiSender,
     osc_sink: Option<OscSink>,
     alphas: SmoothingAlphas,
@@ -28,6 +32,7 @@ impl Runtime {
         osc_sink: Option<OscSink>,
         targets_a: Arc<RwLock<PhysicsTargets>>,
         targets_b: Option<Arc<RwLock<PhysicsTargets>>>,
+        coupling_targets: Option<Arc<RwLock<CouplingTargets>>>,
         input_listener: Option<MidiInputListener>,
         perturbation_router: Option<PerturbationRouter>,
     ) -> Self {
@@ -72,8 +77,14 @@ impl Runtime {
             pipelines.push(chain_b);
         }
 
+        let coupling = match (&config.coupling, &config.chain_b, coupling_targets) {
+            (Some(c), Some(_), Some(targets)) => Some(CouplingState::new_with_targets(c, targets)),
+            _ => None,
+        };
+
         Self {
             pipelines,
+            coupling,
             midi_sender,
             osc_sink,
             alphas,
@@ -111,8 +122,17 @@ impl Runtime {
             p.advance_smoothing(&self.alphas);
         }
 
-        // Phase 2: physics. (Eventually: snapshot all <M>, then step each
-        // chain using the snapshot as coupling input. For now: just step.)
+        // Phase 1.5: coupling. Snapshot both chains' state, then inject
+        // coupling fields. Must happen between smoothing (so coupling sees
+        // smoothed parameters) and physics (so injected deltas land before
+        // the chain consumes them in step_physics).
+        if let Some(coupling) = self.coupling.as_mut() {
+            coupling.advance_smoothing(&self.alphas);
+            let snapshot = coupling.snapshot(&self.pipelines);
+            coupling.inject(&snapshot, &mut self.pipelines);
+        }
+
+        // Phase 2: physics.
         for p in &mut self.pipelines {
             p.step_physics();
         }
@@ -129,7 +149,7 @@ impl Runtime {
             p.process_walls(&self.midi_sender, self.osc_sink.as_mut());
         }
 
-        // Phase 5: state push + flush. One bundle per tick, shared across chains.
+        // Phase 5: state push + flush.
         if let Some(sink) = self.osc_sink.as_mut() {
             for p in &self.pipelines {
                 p.push_state(sink);

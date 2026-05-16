@@ -5,50 +5,6 @@
 //! existing `Config` types are not changed by this module — it is purely
 //! a deserialization layer.
 //!
-//! # File layout (schema summary)
-//!
-//! ```toml
-//! [tempo]
-//! bpm = 120
-//!
-//! [osc]
-//! listen_port = 9000              # optional
-//! send_address = "127.0.0.1:9001" # optional
-//! state_rate_hz = 50
-//! enable_state = true
-//!
-//! [physics]   # optional shared block
-//! kt = 0.1
-//! eps = 0.01
-//! j = 1.2
-//! w = 2.0
-//! n_sites = 8
-//! ticks_per_period = 25
-//!
-//! [chain_a]
-//! seed = 47
-//!
-//! [chain_a.physics]   # optional; overrides [physics] for chain A
-//! # same fields as [physics]
-//!
-//! [chain_a.gates]
-//! voice_0 = 1                                # shorthand: channel-only
-//! voice_1 = { channel = 2, pitch = 52 }      # full form
-//! gate_length_ms = 50                        # optional
-//!
-//! [chain_a.walls]
-//! voice_0 = 5                                # named voices, Option 1 style
-//! voice_1 = 6
-//! pitch_low = 36
-//! pitch_high = 60
-//! motion_cc = 1                              # 0 disables
-//! repitch_on_move = false
-//!
-//! [chain_a.clock]
-//! channel = 16
-//! enabled = true                             # optional, default true
-//! ```
-//!
 //! Channel and pitch numbers in the file are 1-based for channels
 //! (1..=16) and 0..=127 for MIDI pitches. Internal representations
 //! convert channels to 0-based.
@@ -57,7 +13,7 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use super::{ChainConfig, ClockConfig, Config, EventConfig, InputConfig, MidiConfig, OscConfig, PerturbationConfig, PerturbationKindConfig, PhysicsConfig, TempoConfig, WallConfig, WallMidiConfig};
+use super::{ChainConfig, ClockConfig, Config, CouplingConfig, CouplingShape, EventConfig, InputConfig, MidiConfig, OscConfig, PerturbationConfig, PerturbationKindConfig, PhysicsConfig, TempoConfig, WallConfig, WallMidiConfig};
 
 // --- Public API ------------------------------------------------------------
 
@@ -124,6 +80,7 @@ struct TomlConfig {
     osc: Option<OscSection>,
     physics: Option<PhysicsSection>,
     input: Option<InputSection>,
+    coupling: Option<CouplingSection>,
     chain_a: ChainSection,
     chain_b: Option<ChainSection>,
 }
@@ -144,6 +101,16 @@ struct OscSection {
 #[derive(Debug, Deserialize)]
 struct InputSection {
     perturbation: Option<PerturbationSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CouplingSection {
+    shape: String,
+    /// Convenience: when given, sets both strengths to this value.
+    /// Mutually exclusive with strength_ab and strength_ba.
+    strength: Option<f64>,
+    strength_ab: Option<f64>,
+    strength_ba: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,6 +218,7 @@ impl TomlConfig {
         };
 
         let input = build_input(self.input)?;
+        let coupling = build_coupling(self.coupling)?;
 
         // Combined duplicate-channel validation across both chains.
         let mut all_claims = claims_a;
@@ -260,6 +228,7 @@ impl TomlConfig {
         Ok(Config {
             chain_a,
             chain_b,
+            coupling,
             tempo,
             osc,
             input,
@@ -348,6 +317,65 @@ fn build_physics(section: Option<PhysicsSection>) -> PhysicsConfig {
         dt: s.dt.unwrap_or(defaults.dt),
         kick_angle: s.kick_angle.unwrap_or(defaults.kick_angle),
     }
+}
+
+fn build_coupling(
+    section: Option<CouplingSection>,
+) -> Result<Option<CouplingConfig>, ConfigError> {
+    let Some(s) = section else { return Ok(None) };
+
+    // Shape parsing. Unknown shapes are rejected.
+    let shape = match s.shape.to_lowercase().as_str() {
+        "mean_field_z" => CouplingShape::MeanFieldZ,
+        "site_paired"  => CouplingShape::SitePaired,
+        "shared_drive" => CouplingShape::SharedDrive,
+        other => {
+            return Err(ConfigError::Validation(format!(
+                "coupling.shape must be 'mean_field_z', 'site_paired', or 'shared_drive' (got '{}')",
+                other
+            )));
+        }
+    };
+
+    // Strength resolution. Three valid input shapes:
+    //   1. `strength` alone        -> both directions equal.
+    //   2. `strength_ab` and/or `strength_ba` -> set those, default unset to 0.
+    //   3. Nothing                 -> both default to 0.
+    // Mixing `strength` with `strength_ab` or `strength_ba` is a config
+    // error, because it makes the intended value of strength ambiguous.
+    let has_combined = s.strength.is_some();
+    let has_split    = s.strength_ab.is_some() || s.strength_ba.is_some();
+    if has_combined && has_split {
+        return Err(ConfigError::Validation(
+            "coupling.strength is mutually exclusive with strength_ab / strength_ba".to_string(),
+        ));
+    }
+
+    let (strength_ab, strength_ba) = if let Some(g) = s.strength {
+        (g, g)
+    } else {
+        (s.strength_ab.unwrap_or(0.0), s.strength_ba.unwrap_or(0.0))
+    };
+
+    // Validate ranges. Same bounds as physics targets so OSC clamps and
+    // file-loaded values agree.
+    let validate = |name: &str, v: f64| -> Result<(), ConfigError> {
+        if !(0.0..=2.0).contains(&v) {
+            return Err(ConfigError::Validation(format!(
+                "coupling.{} must be in 0.0..=2.0 (got {})",
+                name, v
+            )));
+        }
+        Ok(())
+    };
+    validate("strength_ab", strength_ab)?;
+    validate("strength_ba", strength_ba)?;
+
+    Ok(Some(CouplingConfig {
+        shape,
+        strength_ab,
+        strength_ba,
+    }))
 }
 
 /// Build `MidiConfig` from `[chain_a.gates]`. Returns the config plus
@@ -912,5 +940,133 @@ mod tests {
     "#;
         let err = load_str(toml).expect_err("bad kind should fail");
         assert!(format!("{}", err).contains("wiggle"));
+    }
+
+    #[test]
+    fn coupling_section_optional() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+    "#;
+        let config = load_str(toml).expect("should parse");
+        assert!(config.coupling.is_none());
+    }
+
+    #[test]
+    fn coupling_strength_shorthand_sets_both_directions() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+
+        [coupling]
+        shape = "mean_field_z"
+        strength = 0.15
+    "#;
+        let config = load_str(toml).expect("should parse");
+        let c = config.coupling.expect("coupling present");
+        assert_eq!(c.shape, crystallized_time::config::CouplingShape::MeanFieldZ);
+        assert!((c.strength_ab - 0.15).abs() < 1e-9);
+        assert!((c.strength_ba - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn coupling_asymmetric_strengths() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+
+        [coupling]
+        shape = "mean_field_z"
+        strength_ab = 0.2
+        strength_ba = 0.05
+    "#;
+        let config = load_str(toml).expect("should parse");
+        let c = config.coupling.expect("coupling present");
+        assert!((c.strength_ab - 0.2).abs() < 1e-9);
+        assert!((c.strength_ba - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn coupling_strength_and_split_form_are_mutually_exclusive() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+
+        [coupling]
+        shape = "mean_field_z"
+        strength = 0.1
+        strength_ab = 0.2
+    "#;
+        let err = load_str(toml).expect_err("mixed forms should fail");
+        assert!(format!("{}", err).contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn coupling_unknown_shape_rejected() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+
+        [coupling]
+        shape = "telepathy"
+    "#;
+        let err = load_str(toml).expect_err("bad shape should fail");
+        assert!(format!("{}", err).contains("telepathy"));
+    }
+
+    #[test]
+    fn coupling_out_of_range_strength_rejected() {
+        let toml = r#"
+        [chain_a]
+        [chain_a.gates]
+        voice_0 = 1
+        [chain_a.clock]
+        channel = 16
+
+        [coupling]
+        shape = "mean_field_z"
+        strength = 5.0
+    "#;
+        let err = load_str(toml).expect_err("out of range should fail");
+        assert!(format!("{}", err).contains("0.0..=2.0"));
+    }
+
+    #[test]
+    fn coupling_site_paired_and_shared_drive_parse() {
+        // The two stubs should parse cleanly even though the runtime
+        // doesn't implement them yet. The config layer's job is just
+        // typed validation.
+        for shape in ["site_paired", "shared_drive"] {
+            let toml = format!(
+                r#"
+            [chain_a]
+            [chain_a.gates]
+            voice_0 = 1
+            [chain_a.clock]
+            channel = 16
+
+            [coupling]
+            shape = "{}"
+            strength = 0.1
+            "#,
+                shape
+            );
+            load_str(&toml).expect(&format!("{} should parse", shape));
+        }
     }
 }

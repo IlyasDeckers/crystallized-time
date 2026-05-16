@@ -131,7 +131,7 @@ impl SpinChain {
                 self.renormalize_site(site);
             }
             PerturbationKind::FieldSpike { delta } => {
-                self.pending_field_deltas[site] = Some(delta);
+                self.add_pending_field_delta(site, delta);
             }
         }
     }
@@ -268,6 +268,27 @@ impl SpinChain {
             // s[0] (x) unchanged — rotation is around x-axis.
             s[1] = sy_new;
             s[2] = sz_new;
+        }
+    }
+
+    /// Add a one-tick field perturbation to a site, composing with any
+    /// existing pending delta on that site. Coupling injection uses this so
+    /// it doesn't clobber MIDI-triggered field spikes (and vice versa).
+    ///
+    /// Out-of-range site indices are silently dropped, matching `perturb`.
+    pub fn add_pending_field_delta(&mut self, site: usize, delta: Vec3) {
+        if site >= self.spins.len() {
+            return;
+        }
+        match &mut self.pending_field_deltas[site] {
+            Some(existing) => {
+                existing[0] += delta[0];
+                existing[1] += delta[1];
+                existing[2] += delta[2];
+            }
+            None => {
+                self.pending_field_deltas[site] = Some(delta);
+            }
         }
     }
 

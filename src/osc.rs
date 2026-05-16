@@ -3,40 +3,34 @@
 //! This module is pure data — no I/O, no threads, no sockets. It maps
 //! raw `rosc::OscPacket` values onto our internal `InboundMessage` enum,
 //! discarding anything malformed or unrecognized.
-//!
-//! Outbound message types and serialization will be added here in
-//! Steps 4–5 (events and state). For Step 3 the module only covers the
-//! four `/physics/<param>` addresses.
 
 use rosc::{OscMessage, OscPacket, OscType};
 
 use rosc::{encoder, OscBundle, OscPacket as RoscPacket, OscTime, OscType as RoscOscType};
 use crystallized_time::chain_id::ChainId;
 
-/// OSC's "immediate" time tag per the 1.0 spec: seconds=0, fractional=1.
-/// Receivers should process the bundle without scheduling delay. We use
-/// this for every outbound bundle — no NTP timing needed for our use case.
 const TIME_IMMEDIATE: OscTime = OscTime { seconds: 0, fractional: 1 };
 
-/// Recognized inbound OSC messages.
+/// Which chain(s) an inbound write targets.
 ///
-/// The four physics parameter targets are the only things callers can
-/// send today. Future extensions (e.g. `/perturb/flip_site`) would add
-/// variants here; the receiver thread doesn't need to change beyond
-/// that match-arm.
-#[derive(Debug, Clone, Copy)]
-pub enum InboundMessage {
-    SetKt(f64),
-    SetEps(f64),
-    SetJ(f64),
-    SetW(f64),
+/// `Both` is what unprefixed `/physics/...` writes produce. Useful for
+/// TouchDesigner patches that don't know about chain B yet, and for
+/// "move both chains together" gestures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InboundTarget {
+    Chain(ChainId),
+    Both,
 }
 
-/// One event the simulation thread wants to publish externally.
-///
-/// These mirror the things that already happen in the loop: a site
-/// fires, a wall is created / destroyed / moves, the clock pulses.
-/// Serialized into per-tick OSC bundles by `serialize_bundle`.
+#[derive(Debug, Clone, Copy)]
+pub enum InboundMessage {
+    SetKt(InboundTarget, f64),
+    SetEps(InboundTarget, f64),
+    SetJ(InboundTarget, f64),
+    SetW(InboundTarget, f64),
+    SetCouplingStrengthAB(f64),
+    SetCouplingStrengthBA(f64),
+}
 
 #[derive(Debug, Clone)]
 pub enum OutboundEvent {
@@ -83,7 +77,6 @@ pub enum OutboundEvent {
     },
 }
 
-/// Flatten an OSC packet into a sequence of recognized messages.
 pub fn extract_messages(packet: OscPacket) -> Vec<InboundMessage> {
     let mut out = Vec::new();
     walk(packet, &mut out);
@@ -93,7 +86,11 @@ pub fn extract_messages(packet: OscPacket) -> Vec<InboundMessage> {
 fn walk(packet: OscPacket, out: &mut Vec<InboundMessage>) {
     match packet {
         OscPacket::Message(msg) => {
-            if let Some(inbound) = parse_message(&msg) {
+            // Coupling addresses can fan out to multiple messages;
+            // physics addresses always produce zero or one.
+            if let Some(messages) = parse_coupling(&msg) {
+                out.extend(messages);
+            } else if let Some(inbound) = parse_message(&msg) {
                 out.push(inbound);
             }
         }
@@ -105,22 +102,66 @@ fn walk(packet: OscPacket, out: &mut Vec<InboundMessage>) {
     }
 }
 
-/// Try to interpret a single OSC message as one of our inbound types.
-/// Returns None if the address isn't ours or the arguments don't match.
+/// Parse coupling addresses. Returns Some(messages) if the address
+/// is in the coupling namespace (including malformed messages, which
+/// return an empty Vec — that way the caller knows not to fall through
+/// to the physics parser for /coupling/wrong_param). Returns None
+/// only when the address isn't ours at all.
+fn parse_coupling(msg: &OscMessage) -> Option<Vec<InboundMessage>> {
+    let suffix = msg.addr.strip_prefix("/coupling/")?;
+    let value = match extract_float(&msg.args) {
+        Some(v) => v,
+        None => return Some(Vec::new()),
+    };
+    let messages = match suffix {
+        "strength_ab" => vec![InboundMessage::SetCouplingStrengthAB(value)],
+        "strength_ba" => vec![InboundMessage::SetCouplingStrengthBA(value)],
+        "strength" => vec![
+            InboundMessage::SetCouplingStrengthAB(value),
+            InboundMessage::SetCouplingStrengthBA(value),
+        ],
+        _ => Vec::new(),
+    };
+    Some(messages)
+}
+
+/// Map an OSC address to a `(target, parameter_suffix)` pair, if it's
+/// one of ours. Returns None if the address doesn't match the
+/// `[<prefix>]/physics/<param>` shape.
+///
+/// Recognized addresses:
+///   /physics/<param>     -> (Both, <param>)
+///   /a/physics/<param>   -> (Chain(A), <param>)
+///   /b/physics/<param>   -> (Chain(B), <param>)
+fn parse_address(addr: &str) -> Option<(InboundTarget, &str)> {
+    if let Some(rest) = addr.strip_prefix("/a/physics/") {
+        Some((InboundTarget::Chain(ChainId::A), rest))
+    } else if let Some(rest) = addr.strip_prefix("/b/physics/") {
+        Some((InboundTarget::Chain(ChainId::B), rest))
+    } else if let Some(rest) = addr.strip_prefix("/physics/") {
+        Some((InboundTarget::Both, rest))
+    } else {
+        None
+    }
+}
+
 fn parse_message(msg: &OscMessage) -> Option<InboundMessage> {
+    // Try coupling first since these addresses are short and exact.
+    if let Some(m) = parse_coupling(msg) {
+        return Some(m);
+    }
+
+    let (target, param) = parse_address(&msg.addr)?;
     let value = extract_float(&msg.args)?;
-    match msg.addr.as_str() {
-        "/physics/kt"  => Some(InboundMessage::SetKt(value)),
-        "/physics/eps" => Some(InboundMessage::SetEps(value)),
-        "/physics/j"   => Some(InboundMessage::SetJ(value)),
-        "/physics/w"   => Some(InboundMessage::SetW(value)),
+    match param {
+        "kt"  => Some(InboundMessage::SetKt(target, value)),
+        "eps" => Some(InboundMessage::SetEps(target, value)),
+        "j"   => Some(InboundMessage::SetJ(target, value)),
+        "w"   => Some(InboundMessage::SetW(target, value)),
         _ => None,
     }
 }
 
-/// Serialize a tick's worth of events into a single OSC bundle ready
-/// for `UdpSocket::send_to`. Empty input returns an empty Vec; callers
-/// should skip sending in that case.
 pub fn serialize_bundle(events: &[OutboundEvent]) -> Vec<u8> {
     if events.is_empty() {
         return Vec::new();
@@ -139,8 +180,6 @@ pub fn serialize_bundle(events: &[OutboundEvent]) -> Vec<u8> {
     encoder::encode(&RoscPacket::Bundle(bundle)).unwrap_or_default()
 }
 
-/// Map one event to its OSC message. Addresses and argument shapes
-/// follow the spec's outbound schema exactly.
 fn to_message(event: &OutboundEvent) -> rosc::OscMessage {
     match event {
         OutboundEvent::WallCreated { chain, id, position, channel } => rosc::OscMessage {
@@ -197,10 +236,6 @@ fn to_message(event: &OutboundEvent) -> rosc::OscMessage {
     }
 }
 
-/// Pull a single numeric argument from a message's argument list, widened
-/// to f64. Accepts both Float (TouchDesigner's default) and Int (a small
-/// kindness for callers who forget to cast). Returns None if the message
-/// has anything other than exactly one numeric argument.
 fn extract_float(args: &[OscType]) -> Option<f64> {
     if args.len() != 1 {
         return None;

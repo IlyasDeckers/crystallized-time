@@ -1,19 +1,7 @@
 //! OSC I/O — the receiver thread.
-//!
-//! Owns a UDP socket bound to the configured port. Loops on recv_from,
-//! decodes each packet via the `osc` module, and writes resolved values
-//! into the shared `PhysicsTargets` under its RwLock.
-//!
-//! Threading model per spec: a regular spawned thread, never joined.
-//! The thread blocks on `recv_from` indefinitely and is terminated by
-//! process exit. No graceful shutdown signal yet — adding one would
-//! require non-blocking sockets and a poll loop, which the spec defers.
-//!
-//! Outbound (sender) thread comes in Steps 4–5; this file will gain a
-//! `spawn_sender` function at that point.
 
 use crate::config::PhysicsTargets;
-use crate::osc::{extract_messages, InboundMessage};
+use crate::osc::{extract_messages, InboundMessage, InboundTarget};
 use rosc::decoder::MTU;
 use std::net::UdpSocket;
 use std::sync::{Arc, RwLock};
@@ -22,23 +10,70 @@ use crate::osc::{serialize_bundle, OutboundEvent};
 use std::net::SocketAddr;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use crystallized_time::chain_id::ChainId;
+use crate::osc_io;
+use crate::runtime::CouplingTargets;
 
-/// One tick's worth of outbound events, bundled together for the sender
-/// thread. Aliased for readability at the call sites that move these
-/// across the channel.
 pub type OutboundBundle = Vec<OutboundEvent>;
 
-/// Bind a UDP socket to `port` on all interfaces and spawn a thread that
-/// drains it forever, applying each recognized message to `targets`.
-///
-/// Returns the port the socket actually bound to (always the requested
-/// port — we don't fall back), or an error if the bind failed. Callers
-/// typically print this on startup as the spec's one-time
-/// "OSC: listening on port N" line and never interact with the thread
-/// again.
+/// Handle holding both chains' physics targets. Built in main.rs from the
+/// per-chain Arc<RwLock<PhysicsTargets>> and passed to the receiver
+/// thread by value (the inner Arcs are cheap to clone).
+#[derive(Clone)]
+pub struct PhysicsTargetsMap {
+    pub a: Arc<RwLock<PhysicsTargets>>,
+    pub b: Option<Arc<RwLock<PhysicsTargets>>>,
+}
+
+impl PhysicsTargetsMap {
+    pub fn new(
+        a: Arc<RwLock<PhysicsTargets>>,
+        b: Option<Arc<RwLock<PhysicsTargets>>>,
+    ) -> Self {
+        Self { a, b }
+    }
+
+    fn get(&self, chain: ChainId) -> Option<&Arc<RwLock<PhysicsTargets>>> {
+        match chain {
+            ChainId::A => Some(&self.a),
+            ChainId::B => self.b.as_ref(),
+        }
+    }
+}
+
+/// Bundle of OSC-writable targets, shared between the receiver thread
+/// and the simulation. Holds per-chain physics targets plus global
+/// coupling targets.
+#[derive(Clone)]
+pub struct OscTargets {
+    pub physics_a: Arc<RwLock<PhysicsTargets>>,
+    pub physics_b: Option<Arc<RwLock<PhysicsTargets>>>,
+    pub coupling: Option<Arc<RwLock<CouplingTargets>>>,
+}
+
+impl OscTargets {
+    pub fn new(
+        physics_a: Arc<RwLock<PhysicsTargets>>,
+        physics_b: Option<Arc<RwLock<PhysicsTargets>>>,
+        coupling: Option<Arc<RwLock<CouplingTargets>>>,
+    ) -> Self {
+        Self {
+            physics_a,
+            physics_b,
+            coupling,
+        }
+    }
+
+    fn get_physics(&self, chain: ChainId) -> Option<&Arc<RwLock<PhysicsTargets>>> {
+        match chain {
+            ChainId::A => Some(&self.physics_a),
+            ChainId::B => self.physics_b.as_ref(),
+        }
+    }
+}
+
 pub fn spawn_receiver(
     port: u16,
-    targets: Arc<RwLock<PhysicsTargets>>,
+    targets: osc_io::OscTargets,
 ) -> std::io::Result<u16> {
     let socket = UdpSocket::bind(("0.0.0.0", port))?;
     let bound_port = socket.local_addr()?.port();
@@ -50,19 +85,13 @@ pub fn spawn_receiver(
     Ok(bound_port)
 }
 
-fn receiver_loop(socket: UdpSocket, targets: Arc<RwLock<PhysicsTargets>>) {
+fn receiver_loop(socket: UdpSocket, targets: OscTargets) {
     let mut buf = [0u8; MTU];
 
     loop {
         let (size, _from) = match socket.recv_from(&mut buf) {
             Ok(pair) => pair,
-            Err(_) => {
-                // Transient recv error. Don't log (would spam on a
-                // persistent fault); just loop and try again. If the
-                // socket is permanently broken the thread will spin
-                // here, which is acceptable for a localhost dev tool.
-                continue;
-            }
+            Err(_) => continue,
         };
 
         let packet = match rosc::decoder::decode_udp(&buf[..size]) {
@@ -75,43 +104,101 @@ fn receiver_loop(socket: UdpSocket, targets: Arc<RwLock<PhysicsTargets>>) {
             continue;
         }
 
-        // Acquire the write lock once per packet, not once per message.
-        // Bundles may contain several writes; we want them visible to
-        // the sim thread atomically as a group.
-        let mut t = match targets.write() {
-            Ok(g) => g,
-            Err(_) => {
-                eprintln!("warning: physics targets lock poisoned; dropping OSC writes");
-                continue;
-            }
-        };
-
         for msg in messages {
-            apply(&mut t, msg);
+            apply(&targets, msg);
         }
     }
 }
 
-/// Apply one parsed message to the targets, clamping to per-parameter
-/// bounds. Clamping is silent — TouchDesigner sliders can easily
-/// produce out-of-range values during normal use, and logging each
-/// clamp would flood stderr.
-fn apply(targets: &mut PhysicsTargets, msg: InboundMessage) {
+/// Apply one parsed message to whichever chain(s) it targets.
+fn apply(targets: &OscTargets, msg: InboundMessage) {
     match msg {
-        InboundMessage::SetKt(v)  => targets.kt  = PhysicsTargets::clamp_kt(v),
-        InboundMessage::SetEps(v) => targets.eps = PhysicsTargets::clamp_eps(v),
-        InboundMessage::SetJ(v)   => targets.j   = PhysicsTargets::clamp_j(v),
-        InboundMessage::SetW(v)   => targets.w   = PhysicsTargets::clamp_w(v),
+        InboundMessage::SetKt(t, v)  => apply_physics(targets, t, ParamKind::Kt,  v),
+        InboundMessage::SetEps(t, v) => apply_physics(targets, t, ParamKind::Eps, v),
+        InboundMessage::SetJ(t, v)   => apply_physics(targets, t, ParamKind::J,   v),
+        InboundMessage::SetW(t, v)   => apply_physics(targets, t, ParamKind::W,   v),
+        InboundMessage::SetCouplingStrengthAB(v) => {
+            apply_coupling(targets, CouplingField::AB, v);
+        }
+        InboundMessage::SetCouplingStrengthBA(v) => {
+            apply_coupling(targets, CouplingField::BA, v);
+        }
     }
 }
 
-/// Bind an outbound UDP socket, parse the destination, and spawn the
-/// sender thread. Returns the channel the simulation thread uses to
-/// push bundles.
-///
-/// The channel is bounded (16 bundles, ~320ms of buffering per spec).
-/// If the sender thread can't keep up, the sim thread drops bundles
-/// rather than blocking or growing memory without bound.
+fn apply_physics(targets: &OscTargets, target: InboundTarget, kind: ParamKind, raw: f64) {
+    let chains: &[ChainId] = match target {
+        InboundTarget::Chain(c) => match c {
+            ChainId::A => &[ChainId::A],
+            ChainId::B => &[ChainId::B],
+        },
+        InboundTarget::Both => &[ChainId::A, ChainId::B],
+    };
+
+    for chain in chains {
+        let Some(lock) = targets.get_physics(*chain) else { continue };
+        let mut t = match lock.write() {
+            Ok(g) => g,
+            Err(_) => {
+                eprintln!("warning: {:?} physics targets lock poisoned; dropping OSC write", chain);
+                continue;
+            }
+        };
+        write_physics(&mut t, kind, raw);
+    }
+}
+
+fn apply_coupling(targets: &OscTargets, field: CouplingField, raw: f64) {
+    let Some(lock) = targets.coupling.as_ref() else {
+        return;
+    };
+    let mut t = match lock.write() {
+        Ok(g) => g,
+        Err(_) => {
+            eprintln!("warning: coupling targets lock poisoned; dropping OSC write");
+            return;
+        }
+    };
+    let clamped = CouplingTargets::clamp_strength(raw);
+    match field {
+        CouplingField::AB => t.strength_ab = clamped,
+        CouplingField::BA => t.strength_ba = clamped,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ParamKind { Kt, Eps, J, W }
+
+#[derive(Clone, Copy)]
+enum CouplingField { AB, BA }
+
+fn write_physics(targets: &mut PhysicsTargets, kind: ParamKind, raw: f64) {
+    match kind {
+        ParamKind::Kt  => targets.kt  = PhysicsTargets::clamp_kt(raw),
+        ParamKind::Eps => targets.eps = PhysicsTargets::clamp_eps(raw),
+        ParamKind::J   => targets.j   = PhysicsTargets::clamp_j(raw),
+        ParamKind::W   => targets.w   = PhysicsTargets::clamp_w(raw),
+    }
+}
+
+fn unpack(msg: InboundMessage) -> (InboundTarget, ParamKind, f64) {
+    match msg {
+        InboundMessage::SetKt(t, v)  => (t, ParamKind::Kt,  v),
+        InboundMessage::SetEps(t, v) => (t, ParamKind::Eps, v),
+        InboundMessage::SetJ(t, v)   => (t, ParamKind::J,   v),
+        InboundMessage::SetW(t, v)   => (t, ParamKind::W,   v),
+    }
+}
+
+fn write_one(targets: &mut PhysicsTargets, kind: ParamKind, raw: f64) {
+    match kind {
+        ParamKind::Kt  => targets.kt  = PhysicsTargets::clamp_kt(raw),
+        ParamKind::Eps => targets.eps = PhysicsTargets::clamp_eps(raw),
+        ParamKind::J   => targets.j   = PhysicsTargets::clamp_j(raw),
+        ParamKind::W   => targets.w   = PhysicsTargets::clamp_w(raw),
+    }
+}
+
 pub fn spawn_sender(send_addr: &str) -> std::io::Result<SyncSender<OutboundBundle>> {
     let dest: SocketAddr = send_addr.parse().map_err(|e| {
         std::io::Error::new(
@@ -119,7 +206,7 @@ pub fn spawn_sender(send_addr: &str) -> std::io::Result<SyncSender<OutboundBundl
             format!("invalid OSC send address '{}': {}", send_addr, e),
         )
     })?;
-    
+
     let socket = UdpSocket::bind("0.0.0.0:0")?;
 
     let (tx, rx) = sync_channel::<OutboundBundle>(16);
@@ -137,31 +224,18 @@ fn sender_loop(socket: UdpSocket, dest: SocketAddr, rx: Receiver<OutboundBundle>
         if bytes.is_empty() {
             continue;
         }
-
         let _ = socket.send_to(&bytes, dest);
     }
 }
 
-/// The simulation thread's handle for pushing events out via OSC.
-///
-/// Owns a reusable staging buffer so per-tick allocation is zero when
-/// no events fire (the common case in the locked phase). `push` adds
-/// to the buffer; `flush_tick` ships it as one bundle and clears it.
 pub struct OscSink {
     tx: SyncSender<OutboundBundle>,
     staging: Vec<OutboundEvent>,
-    /// Throttle state for /state/* messages. None means state pushing
-    /// is disabled (caller passed enable_state=false).
     state_throttle: Option<StateThrottle>,
 }
 
 struct StateThrottle {
-    /// Minimum wall-clock interval between state pushes.
     min_interval: std::time::Duration,
-    /// Time of the last state push. Initialized to Instant::now() at
-    /// construction so the first tick after startup is honored — the
-    /// first push will be one min_interval after the sink is built,
-    /// which is the natural debouncing behavior.
     last_send: std::time::Instant,
 }
 
@@ -189,19 +263,10 @@ impl OscSink {
         }
     }
 
-    /// Add one event to the current tick's staging buffer. Cheap; no
-    /// allocation unless the buffer needs to grow.
     pub fn push(&mut self, event: OutboundEvent) {
         self.staging.push(event);
     }
 
-    /// Push the three state messages if the wall-clock throttle says
-    /// one is due. No-op if state pushing is disabled or the throttle
-    /// hasn't elapsed yet.
-    ///
-    /// `spins` is the chain's current per-site sigma_z values, cast to
-    /// f32 internally. `magnetization` is the mean. `wall_count` is the
-    /// number of currently-active walls.
     pub fn push_state_if_due(
         &mut self,
         chain: ChainId,
@@ -233,12 +298,6 @@ impl OscSink {
         throttle.last_send = now;
     }
 
-    /// Ship the current tick's events as one bundle and clear the
-    /// buffer for the next tick. No-op if nothing was pushed.
-    ///
-    /// On channel-full, the bundle is dropped (and the staging buffer
-    /// still cleared, so we don't accumulate). Drops are silent per
-    /// spec — they're rare and per-tick logging would spam.
     pub fn flush_tick(&mut self) {
         if self.staging.is_empty() {
             return;
@@ -247,14 +306,8 @@ impl OscSink {
         let bundle = std::mem::take(&mut self.staging);
         match self.tx.try_send(bundle) {
             Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
-                // Sender thread is behind. Drop this bundle; the next
-                // tick gets a fresh empty staging buffer either way.
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                // Sender thread is gone. Nothing to do; future flushes
-                // will fail the same way. The sim continues normally.
-            }
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {}
         }
     }
 }
