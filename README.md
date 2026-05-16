@@ -1,6 +1,6 @@
 # Crystallized Time
 
-A time-crystal-driven MIDI gate generator. Simulates a disordered classical spin chain under periodic Floquet drive and converts its dynamics into MIDI output for a eurorack synthesizer. The rhythm, pitch, and modulation signals all emerge from the simulation rather than being programmed directly.
+A time-crystal-driven MIDI gate generator. Simulates one or two disordered classical spin chains under periodic Floquet drive and converts their dynamics into MIDI output for a eurorack synthesizer. The rhythm, pitch, and modulation signals all emerge from the simulation rather than being programmed directly.
 
 This repository contains the first working component of a larger audiovisual installation. See [`crystallized_time.md`](crystallized_time.md) for the full project description.
 
@@ -8,11 +8,13 @@ This repository contains the first working component of a larger audiovisual ins
 
 ## How it works
 
-**Simulation.** The program runs a model of eight coupled spins. A periodic kick is applied to the whole chain at regular intervals. Under the right conditions (appropriate disorder, coupling strength, and temperature), the chain enters a period-doubled phase: each spin flips at half the drive rate. Nothing in the code specifies this rhythm; it emerges from the physics.
+**Simulation.** The program runs a model of coupled spins (8 sites by default). A periodic kick is applied to the whole chain at regular intervals. Under the right conditions (appropriate disorder, coupling strength, and temperature), the chain enters a period-doubled phase: each spin flips at half the drive rate. Nothing in the code specifies this rhythm; it emerges from the physics.
 
-**Readout.** Two observables are tracked simultaneously. Four of the eight spins are watched for zero-crossings (sign flips from up to down or back). Domain walls -- boundaries between adjacent spins pointing in opposite directions -- are tracked as mobile objects that appear, drift along the chain, and annihilate.
+**Readout.** Two observables are tracked simultaneously per chain. Selected sites are watched for zero-crossings of sigma_z. Domain walls, the boundaries between adjacent sites pointing in opposite directions, are tracked as mobile objects that appear, drift, and annihilate.
 
-**MIDI output.** Each zero-crossing produces a 50ms gate pulse, useful for triggering envelopes and rhythmic events. Each domain wall produces a held note: note-on when the wall is born, note-off when it annihilates. Wall motion is reported as a CC stream (position mapped to a configurable CC number) or as discrete repitching when the wall crosses semitone boundaries. A chain clock on its own channel derives from the chain's mean magnetization crossing zero, providing a beat signal that degrades naturally when the chain leaves the locked phase.
+**MIDI output.** Each zero-crossing produces a short gate pulse, useful for triggering envelopes and rhythmic events. Each domain wall produces a held note: note-on when the wall is born, note-off when it annihilates. Wall motion is reported as a CC stream (position mapped to a configurable CC number) or as discrete repitching when the wall crosses semitone boundaries. A chain clock on its own channel derives from the chain's mean magnetization crossing zero, providing a beat signal that degrades naturally when the chain leaves the locked phase.
+
+**Two chains.** A second chain (`chain_b`) can be configured with its own physics, seed, and routing. Chains optionally couple through a configurable shape (currently `mean_field_z`), allowing polyrhythmic interaction where each chain keeps its own period but influences the other.
 
 ---
 
@@ -26,7 +28,13 @@ cargo run --release -- --port 1         # run, sending to port 1
 
 A MIDI destination is required. On Windows, install [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) and create a virtual port. On macOS, use the IAC driver. For hardware, a USB MIDI-to-CV interface will appear directly in the port list.
 
-All routing, tempo, physics, and OSC settings live in [`config.toml`](config.toml) in the project root. The included default file reproduces the previous program defaults exactly — edit it to change anything.
+All routing, tempo, physics, coupling, OSC, and input settings live in [`config.toml`](config.toml) in the project root.
+
+A second binary, `sweep`, runs a parameter sweep over `(eps, J)` for a single chain and writes a CSV plus a classification summary. Useful for finding the locked-phase region before committing to a config.
+
+```sh
+cargo run --release --bin sweep -- --output sweep.csv
+```
 
 ---
 
@@ -36,16 +44,18 @@ All routing, tempo, physics, and OSC settings live in [`config.toml`](config.tom
 |---|---|---|
 | `--list-ports` | | Print available MIDI output ports and exit. |
 | `--port <N>` | `0` | Output port index. |
+| `--list-input-ports` | | Print available MIDI input ports and exit. |
+| `--input-port <N>` | | Input port index. Absent leaves the chain autonomous. |
 | `--config <path>` | `config.toml` | Path to the TOML config file. |
 | `--periods <N>` | `20000` | Number of drive periods to run. |
 
-Everything else — tempo, RNG seed, physics parameters, MIDI routing, OSC ports — is set in the config file.
+Everything else (tempo, RNG seed, physics, MIDI routing, coupling, OSC, perturbation mapping) is set in the config file.
 
 ---
 
 ## The config file
 
-`config.toml` is loaded from the project root by default. The shape:
+`config.toml` is loaded from the project root by default. A full example covering both chains:
 
 ```toml
 [tempo]
@@ -54,6 +64,8 @@ bpm = 120
 [osc]                                # optional
 listen_port = 9000
 send_address = "127.0.0.1:9001"
+state_rate_hz = 50
+enable_state = true
 
 [physics]                            # optional shared block
 kt = 0.1
@@ -62,9 +74,13 @@ j = 1.2
 w = 2.0
 n_sites = 8
 ticks_per_period = 25
+# kick_angle = 3.14159              # default pi (period-2); set 2.0944 for period-3
 
 [chain_a]
 seed = 47
+
+[chain_a.physics]                    # optional per-chain override
+kt = 0.01
 
 [chain_a.gates]
 voice_0 = { channel = 1, pitch = 48 }
@@ -85,26 +101,57 @@ repitch_on_move = false
 
 [chain_a.clock]
 channel = 16
+
+[chain_b]                            # optional second chain
+seed = 83
+
+[chain_b.physics]
+kick_angle = 2.0944                  # target period-3
+
+[chain_b.gates]
+voice_0 = { channel = 9, pitch = 60 }
+
+[chain_b.clock]
+channel = 15
+
+[coupling]                           # optional, requires both chains
+shape = "mean_field_z"
+strength = 0.1                       # convenience: sets both directions
+# strength_ab = 0.1                  # or set explicitly
+# strength_ba = 0.05
+
+[input]                              # optional MIDI input perturbation
+[input.perturbation]
+base_note = 60
+kind = "rotate"                      # "flip" | "rotate" | "field_spike"
+axis = "x"
+magnitude = 0.3
+velocity_scale = 1.0
 ```
 
 Channel numbers in the file are 1-based (`1..=16`); MIDI pitches are `0..=127`.
 
-**Gate voices.** Each `voice_N` entry means "this voice listens to chain site `N`". The shorthand `voice_0 = 1` sets channel 1 with the default pitch; the full form `voice_0 = { channel = 1, pitch = 48 }` sets both. Voices that share a channel are mono — a new note retires the previous one. Voices on distinct channels are polyphonic.
+**Gate voices.** Each `voice_N` entry means "this voice listens to chain site `N`". The shorthand `voice_0 = 1` sets channel 1 with a default pitch. The full form `voice_0 = { channel = 1, pitch = 48 }` sets both. Voices that share a channel are mono (a new note retires the previous one). Voices on distinct channels are polyphonic.
 
-**Wall voices.** A named pool of channels. The allocator picks the next free channel round-robin when a wall is created; when the pool is full, the oldest active wall yields its channel. Delete `[chain_a.walls]` to disable wall output.
+**Wall voices.** A pool of channels named `voice_N`. The allocator picks the next free channel round-robin when a wall is created. When the pool is full, the oldest active wall yields its channel. Delete `[chain_a.walls]` to disable wall output.
 
 **Clock.** A gate pulse on the configured channel every time the chain's mean magnetization crosses zero. In the locked phase this fires at a stable rate; near a phase boundary it becomes irregular; in the thermal phase it stops.
 
-**Physics.** A shared `[physics]` block applies to every chain that doesn't define its own `[chain_a.physics]` (or `[chain_b.physics]` once that exists). Per-chain blocks win when both are present.
+**Physics.** The shared `[physics]` block applies to every chain that doesn't define its own `[chain_x.physics]`. Per-chain blocks win when both are present. Fields are all optional inside a physics block; absent fields fall through to defaults. `kick_angle` controls the target sub-harmonic (pi for period-2, 2*pi/3 for period-3, pi/2 for period-4, etc.).
+
+**Coupling.** When both chains are configured, an optional `[coupling]` section enables inter-chain influence. `shape = "mean_field_z"` adds each chain's mean magnetization as a uniform z-field on the other. `strength` sets both directions to the same value; `strength_ab` and `strength_ba` set them separately. The two forms are mutually exclusive. `site_paired` and `shared_drive` shapes parse but are not yet implemented (they log a one-time warning and run with no coupling).
+
+**Input.** When `[input]` is present and `--input-port` is given, incoming MIDI notes perturb the chain. `kind = "flip"` negates sigma_z on the targeted site; `"rotate"` rotates the spin by `magnitude` radians around `axis`; `"field_spike"` adds a one-tick field of `magnitude` on `axis`. Velocity scales the magnitude (except for `flip`, which is binary). Site mapping is `(note - base_note) mod n_sites`. Input feeds only `chain_a`.
 
 The loader validates the file before the program starts:
 
-- Channel numbers must be in 1..=16.
-- No channel can be claimed by more than one signal across gates, walls, and clock.
+- Channel numbers must be in `1..=16`.
+- No channel can be claimed by more than one signal across gates, walls, and clock, in either chain.
 - `voice_N` indices must correspond to real chain sites (`N < n_sites`).
 - Pitch and CC numbers must be in range.
+- Coupling strengths must be in `0.0..=2.0`.
 
-Errors name the offending entry exactly — e.g.
+Errors name the offending entry, e.g.
 
 ```
 config error: channel 16 is assigned to both chain_a.gates.voice_3 and chain_a.clock
@@ -114,7 +161,7 @@ config error: channel 16 is assigned to both chain_a.gates.voice_3 and chain_a.c
 
 ## Chain clock
 
-The program watches the mean magnetization of the chain and emits a gate pulse every time it crosses zero. In the locked phase this fires at a stable rate; near a phase boundary the pulse rate becomes irregular; in the thermal phase it stops. Feed this into a clock divider and it becomes the master clock for downstream sequencers and oscillators.
+The program watches the mean magnetization of each chain and emits a gate pulse every time it crosses zero. In the locked phase this fires at a stable rate; near a phase boundary the pulse rate becomes irregular; in the thermal phase it stops. Feed this into a clock divider to use it as the master clock for downstream sequencers and oscillators.
 
 ---
 
@@ -133,13 +180,15 @@ When the number of active walls exceeds the available channels, the oldest activ
 
 ## Live control via OSC
 
-The OSC layer turns the program into a system that can be shaped in real time. An external program (TouchDesigner, a Python script, a custom controller) can write to the four mutable physics parameters while the simulation runs; the program publishes its internal state and events back over a second port.
+The OSC layer turns the program into a system that can be shaped in real time. An external program (TouchDesigner, a Python script, a custom controller) can write to mutable parameters while the simulation runs. The program publishes its internal state and events back over a second port.
 
-Both directions are opt-in. Without `listen_port` and `send_address` in the `[osc]` section, no OSC threads start and the behavior is identical to running without them.
+Both directions are opt-in. Without `listen_port` and `send_address` in the `[osc]` section, no OSC threads start.
 
 ### Inbound parameter control
 
-When `listen_port` is set, the program accepts messages on four addresses:
+When `listen_port` is set, the program accepts messages on the following addresses.
+
+Physics parameters, written to both chains at once:
 
 ```
 /physics/kt   float    effective temperature,  0.0 - 2.0
@@ -148,28 +197,45 @@ When `listen_port` is set, the program accepts messages on four addresses:
 /physics/w    float    disorder width,         0.0 - 5.0
 ```
 
-Out-of-range values are clamped silently. Parameter changes are smoothed over several seconds so that sudden input produces a gradual transition rather than an audible click.
+Per-chain variants, with the same value ranges:
+
+```
+/a/physics/kt, /a/physics/eps, /a/physics/j, /a/physics/w
+/b/physics/kt, /b/physics/eps, /b/physics/j, /b/physics/w
+```
+
+Inter-chain coupling (only effective when both chains and `[coupling]` are configured):
+
+```
+/coupling/strength_ab   float    chain A's influence on chain B, 0.0 - 2.0
+/coupling/strength_ba   float    chain B's influence on chain A, 0.0 - 2.0
+/coupling/strength      float    writes both directions at once
+```
+
+Out-of-range values are clamped silently. Parameter changes are smoothed over several seconds (per-parameter time constants) so that sudden input produces a gradual transition rather than an audible click. Malformed packets are dropped silently.
 
 ### Outbound events and state
 
-When `send_address` is set, the program publishes two kinds of traffic.
+When `send_address` is set, the program publishes two kinds of traffic, namespaced by chain (`/a/...` for chain A, `/b/...` for chain B).
 
 **Events** fire once per occurrence:
 
 ```
-/site/event      int site, int voice, float intensity
-/clock/pulse     float magnetization
-/wall/created    int id, float position, int channel
-/wall/destroyed  int id, float last_position, int lifetime_ticks
-/wall/moved      int id, float from, float to, float velocity
+/a/site/event      int site, int voice, float intensity
+/a/clock/pulse     float magnetization
+/a/wall/created    int id, float position, int channel
+/a/wall/destroyed  int id, float last_position, int lifetime_ticks
+/a/wall/moved      int id, float from, float to, float velocity
 ```
 
-**State** is sampled at up to the configured rate (default 50 Hz):
+(and the matching `/b/...` set when chain B is active).
+
+**State** is sampled at up to `state_rate_hz` (default 50, set to 0 or `enable_state = false` to disable):
 
 ```
-/state/spins           n_sites floats    per-site sigma_z values
-/state/magnetization   float             mean sigma_z
-/state/wall_count      int               number of active walls
+/a/state/spins           n_sites floats    per-site sigma_z values
+/a/state/magnetization   float             mean sigma_z
+/a/state/wall_count      int               number of active walls
 ```
 
 Events and state that fire on the same tick are packed into a single OSC bundle and sent as one UDP packet.
@@ -190,34 +256,42 @@ The program listens for parameter writes on port 9000 and publishes to port 9001
 
 ---
 
+## MIDI input
+
+When `[input]` is in the config and `--input-port <N>` is passed, incoming MIDI notes on the chosen port become localized perturbations on `chain_a`. Each note-on lands on one site (chosen by `(note - base_note) mod n_sites`) with magnitude scaled by velocity. The perturbation kind (`flip`, `rotate`, `field_spike`) is fixed per run by the config. Note-off messages and CC messages are ignored.
+
+`--list-input-ports` prints the available input ports and exits.
+
+---
+
 ## OSC message reference
 
 **Inbound** (`listen_port`):
 
 | Address | Arguments |
 |---|---|
-| `/physics/kt` | float |
-| `/physics/eps` | float |
-| `/physics/j` | float |
-| `/physics/w` | float |
+| `/physics/kt`, `/physics/eps`, `/physics/j`, `/physics/w` | float |
+| `/a/physics/...`, `/b/physics/...` | float (per-chain variants) |
+| `/coupling/strength_ab`, `/coupling/strength_ba` | float |
+| `/coupling/strength` | float (writes both) |
 
-**Outbound events** (`send_address`):
-
-| Address | Arguments |
-|---|---|
-| `/site/event` | int site, int voice, float intensity |
-| `/clock/pulse` | float magnetization |
-| `/wall/created` | int id, float position, int channel |
-| `/wall/destroyed` | int id, float last_position, int lifetime_ticks |
-| `/wall/moved` | int id, float from, float to, float velocity |
-
-**Outbound state** (throttled):
+**Outbound events** (`send_address`, per chain with `/a/` or `/b/` prefix):
 
 | Address | Arguments |
 |---|---|
-| `/state/spins` | n_sites x float |
-| `/state/magnetization` | float |
-| `/state/wall_count` | int |
+| `/{chain}/site/event` | int site, int voice, float intensity |
+| `/{chain}/clock/pulse` | float magnetization |
+| `/{chain}/wall/created` | int id, float position, int channel |
+| `/{chain}/wall/destroyed` | int id, float last_position, int lifetime_ticks |
+| `/{chain}/wall/moved` | int id, float from, float to, float velocity |
+
+**Outbound state** (throttled, per chain):
+
+| Address | Arguments |
+|---|---|
+| `/{chain}/state/spins` | n_sites x float |
+| `/{chain}/state/magnetization` | float |
+| `/{chain}/state/wall_count` | int |
 
 ---
 
