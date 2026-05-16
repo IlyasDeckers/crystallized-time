@@ -10,7 +10,6 @@ use crate::osc::{serialize_bundle, OutboundEvent};
 use std::net::SocketAddr;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use crystallized_time::chain_id::ChainId;
-use crate::osc_io;
 use crate::runtime::CouplingTargets;
 
 pub type OutboundBundle = Vec<OutboundEvent>;
@@ -73,7 +72,7 @@ impl OscTargets {
 
 pub fn spawn_receiver(
     port: u16,
-    targets: osc_io::OscTargets,
+    targets: OscTargets,
 ) -> std::io::Result<u16> {
     let socket = UdpSocket::bind(("0.0.0.0", port))?;
     let bound_port = socket.local_addr()?.port();
@@ -181,24 +180,6 @@ fn write_physics(targets: &mut PhysicsTargets, kind: ParamKind, raw: f64) {
     }
 }
 
-fn unpack(msg: InboundMessage) -> (InboundTarget, ParamKind, f64) {
-    match msg {
-        InboundMessage::SetKt(t, v)  => (t, ParamKind::Kt,  v),
-        InboundMessage::SetEps(t, v) => (t, ParamKind::Eps, v),
-        InboundMessage::SetJ(t, v)   => (t, ParamKind::J,   v),
-        InboundMessage::SetW(t, v)   => (t, ParamKind::W,   v),
-    }
-}
-
-fn write_one(targets: &mut PhysicsTargets, kind: ParamKind, raw: f64) {
-    match kind {
-        ParamKind::Kt  => targets.kt  = PhysicsTargets::clamp_kt(raw),
-        ParamKind::Eps => targets.eps = PhysicsTargets::clamp_eps(raw),
-        ParamKind::J   => targets.j   = PhysicsTargets::clamp_j(raw),
-        ParamKind::W   => targets.w   = PhysicsTargets::clamp_w(raw),
-    }
-}
-
 pub fn spawn_sender(send_addr: &str) -> std::io::Result<SyncSender<OutboundBundle>> {
     let dest: SocketAddr = send_addr.parse().map_err(|e| {
         std::io::Error::new(
@@ -236,7 +217,7 @@ pub struct OscSink {
 
 struct StateThrottle {
     min_interval: std::time::Duration,
-    last_send: std::time::Instant,
+    last_send: std::collections::HashMap<ChainId, std::time::Instant>,
 }
 
 impl OscSink {
@@ -244,10 +225,8 @@ impl OscSink {
         let state_throttle = if config.enable_state {
             if config.state_rate_hz > 0.0 {
                 Some(StateThrottle {
-                    min_interval: std::time::Duration::from_secs_f64(
-                        1.0 / config.state_rate_hz,
-                    ),
-                    last_send: std::time::Instant::now(),
+                    min_interval: std::time::Duration::from_secs_f64(1.0 / config.state_rate_hz),
+                    last_send: std::collections::HashMap::new(),
                 })
             } else {
                 None
@@ -280,8 +259,10 @@ impl OscSink {
         };
 
         let now = std::time::Instant::now();
-        if now.duration_since(throttle.last_send) < throttle.min_interval {
-            return;
+        if let Some(last) = throttle.last_send.get(&chain) {
+            if now.duration_since(*last) < throttle.min_interval {
+                return;
+            }
         }
 
         let values: Vec<f32> = spins.iter().map(|v| *v as f32).collect();
@@ -295,7 +276,7 @@ impl OscSink {
             count: wall_count.min(i32::MAX as usize) as i32,
         });
 
-        throttle.last_send = now;
+        throttle.last_send.insert(chain, now);
     }
 
     pub fn flush_tick(&mut self) {

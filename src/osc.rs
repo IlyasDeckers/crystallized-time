@@ -146,11 +146,6 @@ fn parse_address(addr: &str) -> Option<(InboundTarget, &str)> {
 }
 
 fn parse_message(msg: &OscMessage) -> Option<InboundMessage> {
-    // Try coupling first since these addresses are short and exact.
-    if let Some(m) = parse_coupling(msg) {
-        return Some(m);
-    }
-
     let (target, param) = parse_address(&msg.addr)?;
     let value = extract_float(&msg.args)?;
     match param {
