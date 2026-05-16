@@ -14,31 +14,6 @@ use crate::runtime::CouplingTargets;
 
 pub type OutboundBundle = Vec<OutboundEvent>;
 
-/// Handle holding both chains' physics targets. Built in main.rs from the
-/// per-chain Arc<RwLock<PhysicsTargets>> and passed to the receiver
-/// thread by value (the inner Arcs are cheap to clone).
-#[derive(Clone)]
-pub struct PhysicsTargetsMap {
-    pub a: Arc<RwLock<PhysicsTargets>>,
-    pub b: Option<Arc<RwLock<PhysicsTargets>>>,
-}
-
-impl PhysicsTargetsMap {
-    pub fn new(
-        a: Arc<RwLock<PhysicsTargets>>,
-        b: Option<Arc<RwLock<PhysicsTargets>>>,
-    ) -> Self {
-        Self { a, b }
-    }
-
-    fn get(&self, chain: ChainId) -> Option<&Arc<RwLock<PhysicsTargets>>> {
-        match chain {
-            ChainId::A => Some(&self.a),
-            ChainId::B => self.b.as_ref(),
-        }
-    }
-}
-
 /// Bundle of OSC-writable targets, shared between the receiver thread
 /// and the simulation. Holds per-chain physics targets plus global
 /// coupling targets.

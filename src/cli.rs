@@ -35,9 +35,4 @@ pub struct Cli {
     /// Which MIDI input port to open. Absence runs the chain without input.
     #[arg(long)]
     pub input_port: Option<usize>,
-
-    /// Debug: fire one Flip on site 4 at tick 2000. For verifying the
-    /// perturbation mechanism. Remove once MIDI input lands.
-    #[arg(long)]
-    pub debug: bool,
 }
