@@ -13,7 +13,8 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use super::{ChainConfig, ClockConfig, Config, CouplingConfig, CouplingShape, EventConfig, InputConfig, MidiConfig, ModulationConfig, OscConfig, PerturbationConfig, PerturbationKindConfig, PhysicsConfig, PhysicsTargets, TempoConfig, WallConfig, WallMidiConfig};
+use super::{ChainConfig, ClockConfig, Config, CouplingConfig, CouplingShape, EventConfig, InputConfig, MidiConfig, ModulationConfig, OscConfig, PerturbationConfig, PerturbationKindConfig, PhysicsConfig, PhysicsTargets, QuantizeConfig, TempoConfig, WallConfig, WallMidiConfig};
+use crate::quantizer::Scale;
 
 // --- Public API ------------------------------------------------------------
 
@@ -146,6 +147,7 @@ struct ChainSection {
     walls: Option<WallsSection>,
     clock: ClockSection,
     modulation: Option<ModulationSection>,
+    quantize: Option<QuantizeSection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -202,6 +204,12 @@ struct ModulationSection {
     enabled: Option<bool>,
     channel: Option<u8>,
     cc_number: Option<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuantizeSection {
+    scale: Option<String>,
+    root_note: Option<u8>,
 }
 
 // --- Conversion ------------------------------------------------------------
@@ -576,6 +584,35 @@ fn build_modulation(
     })
 }
 
+fn build_quantize(
+    section: &Option<QuantizeSection>,
+    chain_label: &str,
+) -> Result<QuantizeConfig, ConfigError> {
+    let defaults = QuantizeConfig::default();
+    let Some(s) = section else { return Ok(defaults) };
+    let scale = match &s.scale {
+        Some(name) => Scale::from_name(name).ok_or_else(|| {
+            ConfigError::Validation(format!(
+                "{}.quantize.scale: unknown scale '{}' \
+                 (valid: unquantized, major, minor, pentatonic, hirajoshi, iwato)",
+                chain_label, name
+            ))
+        })?,
+        None => defaults.scale,
+    };
+    let root_note = match s.root_note {
+        Some(n) if n <= 127 => n,
+        Some(n) => {
+            return Err(ConfigError::Validation(format!(
+                "{}.quantize.root_note must be in 0..=127 (got {})",
+                chain_label, n
+            )));
+        }
+        None => defaults.root_note,
+    };
+    Ok(QuantizeConfig { scale, root_note })
+}
+
 fn build_events(
     section: &GatesSection,
     chain_label: &str,
@@ -604,6 +641,7 @@ fn build_chain(
     let clock = build_clock(&section.clock, label)?;
     let events = build_events(&section.gates, label)?;
     let modulation = build_modulation(&section.modulation, label, midi.voice_channels.first().copied())?;
+    let quantize = build_quantize(&section.quantize, label)?;
 
     for &site in &events.output_sites {
         if site >= physics.n_sites {
@@ -635,6 +673,7 @@ fn build_chain(
         walls,
         wall_midi,
         modulation,
+        quantize,
         seed,
     };
 

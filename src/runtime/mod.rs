@@ -2,6 +2,7 @@ use crate::input::MidiInputListener;
 use crate::midi::MidiSender;
 use crate::osc_io::OscSink;
 use crate::perturbation::PerturbationRouter;
+use crate::quantizer::ScaleQuantizer;
 use crate::tui::{CouplingInfo, LogSource, TuiState};
 use crystallized_time::chain_id::ChainId;
 use crystallized_time::config::{
@@ -41,6 +42,8 @@ impl Runtime {
         tui_state: Option<Arc<TuiState>>,
         voice_pitches_a: Option<Arc<RwLock<Vec<u8>>>>,
         voice_pitches_b: Option<Arc<RwLock<Vec<u8>>>>,
+        quantizer_a: Arc<RwLock<Option<ScaleQuantizer>>>,
+        quantizer_b: Option<Arc<RwLock<Option<ScaleQuantizer>>>>,
     ) -> Self {
         let dt_real_secs =
             config.tempo.drive_period_secs / config.chain_a.physics.ticks_per_period as f64;
@@ -62,6 +65,7 @@ impl Runtime {
             input_listener,
             perturbation_router,
             voice_pitches_a,
+            quantizer_a,
         );
         pipelines.push(chain_a);
 
@@ -83,6 +87,7 @@ impl Runtime {
                 None,
                 None,
                 voice_pitches_b,
+                quantizer_b.expect("chain_b is configured but no quantizer was provided"),
             );
             pipelines.push(chain_b);
         }

@@ -4,10 +4,17 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
 
+use crate::quantizer::ScaleQuantizer;
+
 #[derive(Clone, Copy, Debug)]
 pub struct VoiceEditState {
     pub chain_idx: usize,
     pub voice_idx: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct QuantizeEditState {
+    pub chain_idx: usize,
 }
 
 pub struct TuiState {
@@ -20,6 +27,9 @@ pub struct TuiState {
     pub scope_buf_cap: usize,
     pub running: Arc<AtomicBool>,
     pub voice_edit: RwLock<Option<VoiceEditState>>,
+    pub quantize_edit: RwLock<Option<QuantizeEditState>>,
+    pub quantizer_a: Arc<RwLock<Option<ScaleQuantizer>>>,
+    pub quantizer_b: Option<Arc<RwLock<Option<ScaleQuantizer>>>>,
 }
 
 pub struct ChainState {
@@ -59,6 +69,8 @@ impl TuiState {
         chain_b_present: bool,
         voice_pitches_a: Arc<RwLock<Vec<u8>>>,
         voice_pitches_b: Option<Arc<RwLock<Vec<u8>>>>,
+        quantizer_a: Arc<RwLock<Option<ScaleQuantizer>>>,
+        quantizer_b: Option<Arc<RwLock<Option<ScaleQuantizer>>>>,
     ) -> Self {
         let cap = 1024;
         let empty_b = Arc::new(RwLock::new(Vec::new()));
@@ -78,6 +90,9 @@ impl TuiState {
             scope_buf_cap: cap,
             running,
             voice_edit: RwLock::new(None),
+            quantize_edit: RwLock::new(None),
+            quantizer_a,
+            quantizer_b,
         }
     }
 

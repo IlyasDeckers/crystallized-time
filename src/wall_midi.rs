@@ -13,8 +13,10 @@
 
 use crate::config::{PhysicsConfig, WallMidiConfig};
 use crate::midi::MidiSender;
+use crate::quantizer::ScaleQuantizer;
 use crate::walls::WallEvent;
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use crystallized_time::chain_id::ChainId;
 
 struct ActiveVoice {
@@ -25,25 +27,27 @@ struct ActiveVoice {
 
 pub struct WallVoiceAllocator {
     config: WallMidiConfig,
-    /// Number of sites in the chain — needed to map position to pitch.
-    /// Cached at construction; doesn't change at runtime.
     n_sites: usize,
-    /// Active voices: wall_id -> ActiveVoice.
     active: HashMap<u64, ActiveVoice>,
-    /// Round-robin index into `config.channels` for the next channel to try.
     next_idx: usize,
-
     chain_id: ChainId,
+    quantizer: Arc<RwLock<Option<ScaleQuantizer>>>,
 }
 
 impl WallVoiceAllocator {
-    pub fn new(config: WallMidiConfig, physics: &PhysicsConfig, chain_id: ChainId) -> Self {
+    pub fn new(
+        config: WallMidiConfig,
+        physics: &PhysicsConfig,
+        chain_id: ChainId,
+        quantizer: Arc<RwLock<Option<ScaleQuantizer>>>,
+    ) -> Self {
         Self {
             config,
             chain_id,
             n_sites: physics.n_sites,
             active: HashMap::new(),
             next_idx: 0,
+            quantizer,
         }
     }
 
@@ -258,7 +262,7 @@ impl WallVoiceAllocator {
     }
 
     /// Map a wall position in [0.5, n_sites - 1.5] to a MIDI pitch in
-    /// [pitch_low, pitch_high]. Linear, then clamped.
+    /// [pitch_low, pitch_high]. Linear, then clamped, then quantized if configured.
     fn position_to_pitch(&self, position: f64) -> u8 {
         let pos_min = 0.5;
         let pos_max = (self.n_sites - 1) as f64 - 0.5;
@@ -269,7 +273,12 @@ impl WallVoiceAllocator {
         let pitch_range = self.config.pitch_high as f64 - self.config.pitch_low as f64;
         let pitch_f = self.config.pitch_low as f64 + normalized * pitch_range;
 
-        pitch_f.round().clamp(0.0, 127.0) as u8
+        let raw = pitch_f.round().clamp(0.0, 127.0) as u8;
+
+        match self.quantizer.read().unwrap().as_ref() {
+            Some(q) => q.quantize(raw),
+            None => raw,
+        }
     }
 
     /// Map a wall position to a 7-bit CC value (0..=127). Linear across the chain.

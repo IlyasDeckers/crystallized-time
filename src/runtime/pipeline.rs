@@ -10,6 +10,7 @@ use crate::modulation::ModulationEmitter;
 use crate::osc::OutboundEvent;
 use crate::osc_io::OscSink;
 use crate::perturbation::PerturbationRouter;
+use crate::quantizer::ScaleQuantizer;
 use crate::wall_midi::WallVoiceAllocator;
 use crate::walls::WallDetector;
 use crate::tui::{LogSource, TuiState};
@@ -40,6 +41,8 @@ pub struct ChainPipeline {
     input_listener: Option<MidiInputListener>,
     perturbation_router: Option<PerturbationRouter>,
 
+    quantizer: Arc<RwLock<Option<ScaleQuantizer>>>,
+
     n_sites: usize,
 }
 
@@ -59,6 +62,7 @@ impl ChainPipeline {
         input_listener: Option<MidiInputListener>,
         perturbation_router: Option<PerturbationRouter>,
         voice_pitch_overrides: Option<Arc<RwLock<Vec<u8>>>>,
+        quantizer: Arc<RwLock<Option<ScaleQuantizer>>>,
     ) -> Self {
         use rand::SeedableRng;
 
@@ -67,9 +71,9 @@ impl ChainPipeline {
         let chain = SpinChain::new(Arc::clone(&physics_arc), &mut rng);
 
         let detector = EventDetector::new(events_cfg.clone(), midi_cfg, &chain, voice_pitch_overrides);
-        let clock_emitter = ClockEmitter::new(clock_cfg, &chain, id);
+        let clock_emitter = ClockEmitter::new(clock_cfg, &chain, id, Arc::clone(&quantizer));
         let wall_detector = WallDetector::new(walls_cfg);
-        let wall_voicer = WallVoiceAllocator::new(wall_midi_cfg, &physics, id);
+        let wall_voicer = WallVoiceAllocator::new(wall_midi_cfg, &physics, id, Arc::clone(&quantizer));
         let modulation_emitter =
             ModulationEmitter::new(modulation_cfg, events_cfg.output_sites);
 
@@ -86,6 +90,7 @@ impl ChainPipeline {
             rng,
             input_listener,
             perturbation_router,
+            quantizer,
             n_sites: physics.n_sites,
         }
     }
@@ -139,7 +144,11 @@ impl ChainPipeline {
     ) -> usize {
         let events = self.detector.check(&self.chain);
         let count = events.len();
-        for event in events {
+        let quant = self.quantizer.read().unwrap();
+        for mut event in events {
+            if let Some(ref q) = *quant {
+                event.pitch = q.quantize(event.pitch);
+            }
             midi.send_gate(event);
             if let Some(sink) = osc.as_deref_mut() {
                 sink.push(OutboundEvent::SiteEvent {

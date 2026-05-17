@@ -10,24 +10,30 @@ use crystallized_time::chain_id::ChainId;
 use crate::chain::SpinChain;
 use crate::config::ClockConfig;
 use crate::midi::MidiSender;
+use crate::quantizer::ScaleQuantizer;
+use std::sync::{Arc, RwLock};
 
 pub struct ClockEmitter {
     config: ClockConfig,
-    /// Previous <M> value, for sign-change detection.
     prev_m: f64,
-    /// Tick of the last emitted pulse (for debouncing).
     last_pulse_tick: u64,
-
     chain_id: ChainId,
+    quantizer: Arc<RwLock<Option<ScaleQuantizer>>>,
 }
 
 impl ClockEmitter {
-    pub fn new(config: ClockConfig, chain: &SpinChain, chain_id: ChainId) -> Self {
+    pub fn new(
+        config: ClockConfig,
+        chain: &SpinChain,
+        chain_id: ChainId,
+        quantizer: Arc<RwLock<Option<ScaleQuantizer>>>,
+    ) -> Self {
         Self {
             chain_id,
             prev_m: chain.global_magnetization(),
             last_pulse_tick: 0,
             config,
+            quantizer,
         }
     }
 
@@ -48,9 +54,13 @@ impl ClockEmitter {
         let current_m = chain.global_magnetization();
 
         if self.should_pulse(current_m, chain.tick) {
+            let pitch = match self.quantizer.read().unwrap().as_ref() {
+                Some(q) => q.quantize(self.config.pitch),
+                None => self.config.pitch,
+            };
             sender.send_clock_pulse(
                 self.config.channel,
-                self.config.pitch,
+                pitch,
                 self.config.gate_length_ms,
             );
             if let Some(sink) = osc_sink {
@@ -96,9 +106,6 @@ mod tests {
     use super::*;
 
     fn make_emitter(threshold: f64, debounce: u64) -> ClockEmitter {
-        // We bypass `new()` here because constructing a real `SpinChain`
-        // would drag in physics config + RNG; all we need to exercise
-        // `should_pulse` is the three fields it reads.
         ClockEmitter {
             config: ClockConfig {
                 enabled: true,
@@ -111,6 +118,7 @@ mod tests {
             prev_m: 0.0,
             last_pulse_tick: 0,
             chain_id: ChainId::A,
+            quantizer: Arc::new(RwLock::new(None)),
         }
     }
 

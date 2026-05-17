@@ -19,7 +19,7 @@ use crate::cli::Cli;
 // `crate::chain::*` and `crate::config::*` without an explicit dependency on
 // the library crate name. Keep this line unless every sub-module is migrated
 // to `crystallized_time::chain` / `crystallized_time::config`.
-use crystallized_time::{chain, config};
+use crystallized_time::{chain, config, quantizer};
 use crate::config::{config_file, Config, PhysicsTargets};
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -77,6 +77,17 @@ fn main() {
         .as_ref()
         .map(|b| Arc::new(RwLock::new(b.midi.voice_pitches.clone())));
 
+    let quantizer_a: Arc<RwLock<Option<quantizer::ScaleQuantizer>>> =
+        Arc::new(RwLock::new(quantizer::ScaleQuantizer::from_config(&config.chain_a.quantize)));
+    let quantizer_b: Option<Arc<RwLock<Option<quantizer::ScaleQuantizer>>>> = config
+        .chain_b
+        .as_ref()
+        .map(|b| {
+            Arc::new(RwLock::new(quantizer::ScaleQuantizer::from_config(
+                &b.quantize,
+            )))
+        });
+
     let tui_state = if cli.tui {
         let has_b = config.chain_b.is_some();
         let state = Arc::new(tui::TuiState::new(
@@ -85,6 +96,8 @@ fn main() {
             has_b,
             Arc::clone(&voice_pitches_a),
             voice_pitches_b.as_ref().map(Arc::clone),
+            Arc::clone(&quantizer_a),
+            quantizer_b.as_ref().map(Arc::clone),
         ));
         if let Some(ref c) = config.coupling {
             if let Ok(mut coupl) = state.coupling.write() {
@@ -127,6 +140,8 @@ fn main() {
         } else {
             None
         },
+        Arc::clone(&quantizer_a),
+        quantizer_b.as_ref().map(Arc::clone),
     );
 
     if let Some(tui_handle) = cli.tui.then(|| tui::spawn(tui_state.unwrap())) {

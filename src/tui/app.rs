@@ -1,5 +1,5 @@
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -12,7 +12,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Axis, Block, Borders, Chart, Dataset, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
-use super::{LogSource, TuiState, VoiceEditState};
+use super::{LogSource, QuantizeEditState, TuiState, VoiceEditState};
+use crate::quantizer::Scale;
 
 const SCOPE_COLS: usize = 1024;
 
@@ -51,8 +52,21 @@ fn event_loop(
         if event::poll(frame_duration)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    let in_edit = state.voice_edit.read().ok().map(|e| e.is_some()).unwrap_or(false);
-                    if in_edit {
+                    let in_voice_edit = state.voice_edit.read().ok().map(|e| e.is_some()).unwrap_or(false);
+                    let in_quantize_edit = state.quantize_edit.read().ok().map(|e| e.is_some()).unwrap_or(false);
+                    if in_quantize_edit {
+                        match key.code {
+                            KeyCode::Char('Q') | KeyCode::Esc => {
+                                let _ = state.quantize_edit.write().map(|mut e| *e = None);
+                            }
+                            KeyCode::Left => cycle_scale(state, -1),
+                            KeyCode::Right => cycle_scale(state, 1),
+                            KeyCode::Tab => cycle_chain_for_quantize(state),
+                            KeyCode::Char('+') | KeyCode::Char('=') => adjust_root(state, 1),
+                            KeyCode::Char('-') => adjust_root(state, -1),
+                            _ => {}
+                        }
+                    } else if in_voice_edit {
                         match key.code {
                             KeyCode::Char('e') | KeyCode::Esc => {
                                 let _ = state.voice_edit.write().map(|mut e| *e = None);
@@ -73,6 +87,7 @@ fn event_loop(
                             KeyCode::Char('s') => scatter = !scatter,
                             KeyCode::Char('r') => show_reference = !show_reference,
                             KeyCode::Char('e') => enter_voice_edit(state),
+                            KeyCode::Char('Q') => enter_quantize_edit(state),
                             _ => {}
                         }
                     }
@@ -140,12 +155,93 @@ fn adjust_pitch(state: &Arc<TuiState>, delta: i8) {
     }
 }
 
+fn enter_quantize_edit(state: &Arc<TuiState>) {
+    let idx = state.chains.iter().position(|c| c.present).unwrap_or(0);
+    let _ = state.quantize_edit.write().map(|mut e| {
+        *e = Some(QuantizeEditState { chain_idx: idx })
+    });
+}
+
+fn cycle_chain_for_quantize(state: &Arc<TuiState>) {
+    let _ = state.quantize_edit.write().map(|mut opt| {
+        if let Some(ref mut edit) = *opt {
+            let present: Vec<usize> = state
+                .chains
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.present)
+                .map(|(i, _)| i)
+                .collect();
+            if present.len() > 1 {
+                let cur_pos = present.iter().position(|&i| i == edit.chain_idx).unwrap_or(0);
+                edit.chain_idx = present[(cur_pos + 1) % present.len()];
+            }
+        }
+    });
+}
+
+fn cycle_scale(state: &Arc<TuiState>, delta: isize) {
+    let edit = match state.quantize_edit.read().ok().and_then(|e| *e) {
+        Some(e) => e,
+        None => return,
+    };
+    let quant_arc = get_quantizer(state, edit.chain_idx);
+    if let Some(quant) = quant_arc {
+        let mut lock = match quant.write() {
+            Ok(l) => l,
+            Err(_) => return,
+        };
+        let all = Scale::all();
+        let current = lock.as_ref().map(|q| q.scale).unwrap_or(Scale::Unquantized);
+        let pos = all.iter().position(|&s| s == current).unwrap_or(0);
+        let new_idx = (pos as isize + delta).rem_euclid(all.len() as isize) as usize;
+        let new_scale = all[new_idx];
+        if new_scale == Scale::Unquantized {
+            *lock = None;
+        } else {
+            let root = lock.as_ref().map(|q| q.root_note).unwrap_or(60);
+            *lock = Some(crate::quantizer::ScaleQuantizer {
+                scale: new_scale,
+                root_note: root,
+            });
+        }
+    }
+}
+
+fn adjust_root(state: &Arc<TuiState>, delta: i8) {
+    let edit = match state.quantize_edit.read().ok().and_then(|e| *e) {
+        Some(e) => e,
+        None => return,
+    };
+    let quant_arc = get_quantizer(state, edit.chain_idx);
+    if let Some(quant) = quant_arc {
+        let mut lock = match quant.write() {
+            Ok(l) => l,
+            Err(_) => return,
+        };
+        if let Some(ref mut q) = *lock {
+            q.root_note = (q.root_note as i16 + delta as i16).clamp(0, 127) as u8;
+        }
+    }
+}
+
+fn get_quantizer(
+    state: &Arc<TuiState>,
+    chain_idx: usize,
+) -> Option<&Arc<RwLock<Option<crate::quantizer::ScaleQuantizer>>>> {
+    match chain_idx {
+        0 => Some(&state.quantizer_a),
+        1 => state.quantizer_b.as_ref(),
+        _ => None,
+    }
+}
+
 fn render(frame: &mut Frame, state: &Arc<TuiState>, scatter: bool, show_reference: bool) {
     let area = frame.area();
 
     let header_h = 1;
     let status_h = 1;
-    let voices_h = 2;
+    let voices_h = 4;
     let params_h = 3;
     let bottom_h = params_h + voices_h + status_h;
     let scope_min_h = 12;
@@ -392,7 +488,7 @@ fn render_bottom(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(2),
+            Constraint::Length(4),
             Constraint::Length(1),
         ])
         .split(area);
@@ -461,6 +557,7 @@ fn render_params(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
 
 fn render_voice_pitches(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
     let edit = state.voice_edit.read().ok().and_then(|e| *e);
+    let quant_edit = state.quantize_edit.read().ok().and_then(|e| *e);
     let mut lines: Vec<Line> = Vec::new();
 
     for (i, chain) in state.chains.iter().enumerate() {
@@ -493,11 +590,31 @@ fn render_voice_pitches(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
             }
             lines.push(Line::from(spans));
         }
+
+        let quant = get_quantizer(state, i).and_then(|q| q.read().ok()).and_then(|l| l.clone());
+        let is_quant_selected = quant_edit.map(|e| e.chain_idx == i).unwrap_or(false);
+        let scale_name = quant.as_ref().map(|q| q.scale.name()).unwrap_or("Unquantized");
+        let root_name = quant.as_ref().map(|q| midi_note_name(q.root_note)).unwrap_or_else(|| "C4".into());
+        let style = if is_quant_selected {
+            Style::default().fg(Color::Black).bg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("  Scale {}: ", label), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{}({})", scale_name, root_name), style),
+        ]));
     }
 
     if let Some(ref _edit_state) = edit {
         lines.push(Line::from(vec![Span::styled(
             "EDIT: Up/Dn=voice  Tab=chain  +/-=pitch  e/Esc=done",
+            Style::default().fg(Color::DarkGray),
+        )]));
+    }
+    if quant_edit.is_some() {
+        lines.push(Line::from(vec![Span::styled(
+            "SCALE EDIT: Left/Right=scale  Tab=chain  +/-=root  Q/Esc=done",
             Style::default().fg(Color::DarkGray),
         )]));
     }
@@ -540,7 +657,7 @@ fn render_status(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
         Style::default(),
     ));
     segments.push(Span::styled(
-        "Press q to quit  s:scatter  r:ref  e:edit voices",
+        "Press q to quit  s:scatter  r:ref  e:edit voices  Q:edit scale",
         Style::default().fg(Color::DarkGray),
     ));
 

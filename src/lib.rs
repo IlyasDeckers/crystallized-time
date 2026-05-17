@@ -5,3 +5,4 @@
 pub mod chain;
 pub mod chain_id;
 pub mod config;
+pub mod quantizer;

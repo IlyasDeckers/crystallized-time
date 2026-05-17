@@ -8,6 +8,7 @@ mod midi;
 mod modulation;
 mod osc;
 mod physics;
+mod quantize;
 mod tempo;
 mod walls;
 mod input;
@@ -23,6 +24,7 @@ pub use physics::{
     apply_smoothing, apply_smoothing_to_f64,
     PhysicsConfig, PhysicsTargets, SmoothingAlphas, SmoothingConfig,
 };
+pub use quantize::QuantizeConfig;
 pub use tempo::TempoConfig;
 pub use walls::{WallConfig, WallMidiConfig};
 
@@ -45,5 +47,6 @@ pub struct ChainConfig {
     pub walls: WallConfig,
     pub wall_midi: WallMidiConfig,
     pub modulation: ModulationConfig,
+    pub quantize: QuantizeConfig,
     pub seed: u64,
 }
