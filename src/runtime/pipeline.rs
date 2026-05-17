@@ -58,6 +58,7 @@ impl ChainPipeline {
         targets: Arc<RwLock<PhysicsTargets>>,
         input_listener: Option<MidiInputListener>,
         perturbation_router: Option<PerturbationRouter>,
+        voice_pitch_overrides: Option<Arc<RwLock<Vec<u8>>>>,
     ) -> Self {
         use rand::SeedableRng;
 
@@ -65,7 +66,7 @@ impl ChainPipeline {
         let physics_arc = Arc::new(ArcSwap::from_pointee(physics.clone()));
         let chain = SpinChain::new(Arc::clone(&physics_arc), &mut rng);
 
-        let detector = EventDetector::new(events_cfg.clone(), midi_cfg, &chain);
+        let detector = EventDetector::new(events_cfg.clone(), midi_cfg, &chain, voice_pitch_overrides);
         let clock_emitter = ClockEmitter::new(clock_cfg, &chain, id);
         let wall_detector = WallDetector::new(walls_cfg);
         let wall_voicer = WallVoiceAllocator::new(wall_midi_cfg, &physics, id);

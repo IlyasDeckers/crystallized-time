@@ -4,6 +4,12 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, RwLock};
 
+#[derive(Clone, Copy, Debug)]
+pub struct VoiceEditState {
+    pub chain_idx: usize,
+    pub voice_idx: usize,
+}
+
 pub struct TuiState {
     pub tick: AtomicU64,
     pub bpm: f64,
@@ -13,6 +19,7 @@ pub struct TuiState {
     pub scope_bufs: RwLock<[VecDeque<f64>; 2]>,
     pub scope_buf_cap: usize,
     pub running: Arc<AtomicBool>,
+    pub voice_edit: RwLock<Option<VoiceEditState>>,
 }
 
 pub struct ChainState {
@@ -25,6 +32,7 @@ pub struct ChainState {
     pub wall_count: RwLock<u64>,
     #[allow(dead_code)]
     pub gate_rate: RwLock<f64>,
+    pub gate_voice_pitches: Arc<RwLock<Vec<u8>>>,
 }
 
 pub struct CouplingInfo {
@@ -45,14 +53,21 @@ pub enum LogSource {
 }
 
 impl TuiState {
-    pub fn new(bpm: f64, running: Arc<AtomicBool>, chain_b_present: bool) -> Self {
+    pub fn new(
+        bpm: f64,
+        running: Arc<AtomicBool>,
+        chain_b_present: bool,
+        voice_pitches_a: Arc<RwLock<Vec<u8>>>,
+        voice_pitches_b: Option<Arc<RwLock<Vec<u8>>>>,
+    ) -> Self {
         let cap = 1024;
+        let empty_b = Arc::new(RwLock::new(Vec::new()));
         Self {
             tick: AtomicU64::new(0),
             bpm,
             chains: [
-                ChainState::new(true),
-                ChainState::new(chain_b_present),
+                ChainState::new(true, voice_pitches_a),
+                ChainState::new(chain_b_present, voice_pitches_b.unwrap_or_else(|| Arc::clone(&empty_b))),
             ],
             coupling: RwLock::new(None),
             event_log: RwLock::new(VecDeque::with_capacity(500)),
@@ -62,6 +77,7 @@ impl TuiState {
             ]),
             scope_buf_cap: cap,
             running,
+            voice_edit: RwLock::new(None),
         }
     }
 
@@ -78,7 +94,7 @@ impl TuiState {
 }
 
 impl ChainState {
-    fn new(present: bool) -> Self {
+    fn new(present: bool, gate_voice_pitches: Arc<RwLock<Vec<u8>>>) -> Self {
         Self {
             present,
             kt: RwLock::new(0.0),
@@ -88,6 +104,7 @@ impl ChainState {
             magnetization: RwLock::new(0.0),
             wall_count: RwLock::new(0),
             gate_rate: RwLock::new(0.0),
+            gate_voice_pitches,
         }
     }
 }

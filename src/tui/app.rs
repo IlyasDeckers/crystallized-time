@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Axis, Block, Borders, Chart, Dataset, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
-use super::{LogSource, TuiState};
+use super::{LogSource, TuiState, VoiceEditState};
 
 const SCOPE_COLS: usize = 1024;
 
@@ -51,17 +51,91 @@ fn event_loop(
         if event::poll(frame_duration)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => {
-                            state.running.store(false, Ordering::Release);
-                            return Ok(());
+                    let in_edit = state.voice_edit.read().ok().map(|e| e.is_some()).unwrap_or(false);
+                    if in_edit {
+                        match key.code {
+                            KeyCode::Char('e') | KeyCode::Esc => {
+                                let _ = state.voice_edit.write().map(|mut e| *e = None);
+                            }
+                            KeyCode::Up => shift_voice_selection(state, -1),
+                            KeyCode::Down => shift_voice_selection(state, 1),
+                            KeyCode::Tab => cycle_chain_selection(state),
+                            KeyCode::Char('+') | KeyCode::Char('=') => adjust_pitch(state, 1),
+                            KeyCode::Char('-') => adjust_pitch(state, -1),
+                            _ => {}
                         }
-                        KeyCode::Char('s') => scatter = !scatter,
-                        KeyCode::Char('r') => show_reference = !show_reference,
-                        _ => {}
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                state.running.store(false, Ordering::Release);
+                                return Ok(());
+                            }
+                            KeyCode::Char('s') => scatter = !scatter,
+                            KeyCode::Char('r') => show_reference = !show_reference,
+                            KeyCode::Char('e') => enter_voice_edit(state),
+                            _ => {}
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+fn enter_voice_edit(state: &Arc<TuiState>) {
+    let idx = state.chains.iter().position(|c| c.present).unwrap_or(0);
+    let _ = state.voice_edit.write().map(|mut e| {
+        *e = Some(VoiceEditState {
+            chain_idx: idx,
+            voice_idx: 0,
+        })
+    });
+}
+
+fn shift_voice_selection(state: &Arc<TuiState>, delta: isize) {
+    let _ = state.voice_edit.write().map(|mut opt| {
+        if let Some(ref mut edit) = *opt {
+            let pitches = state.chains[edit.chain_idx].gate_voice_pitches.read().ok();
+            if let Some(pitches) = pitches {
+                let len = pitches.len();
+                if len > 0 {
+                    let new = (edit.voice_idx as isize + delta).rem_euclid(len as isize) as usize;
+                    edit.voice_idx = new;
+                }
+            }
+        }
+    });
+}
+
+fn cycle_chain_selection(state: &Arc<TuiState>) {
+    let _ = state.voice_edit.write().map(|mut opt| {
+        if let Some(ref mut edit) = *opt {
+            let present: Vec<usize> = state
+                .chains
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.present)
+                .map(|(i, _)| i)
+                .collect();
+            if present.len() > 1 {
+                let cur_pos = present.iter().position(|&i| i == edit.chain_idx).unwrap_or(0);
+                let next = (cur_pos + 1) % present.len();
+                edit.chain_idx = present[next];
+                edit.voice_idx = 0;
+            }
+        }
+    });
+}
+
+fn adjust_pitch(state: &Arc<TuiState>, delta: i8) {
+    let edit = match state.voice_edit.read().ok().and_then(|e| *e) {
+        Some(e) => e,
+        None => return,
+    };
+    if let Ok(mut pitches) = state.chains[edit.chain_idx].gate_voice_pitches.write() {
+        if let Some(p) = pitches.get_mut(edit.voice_idx) {
+            let new = (*p as i16 + delta as i16).clamp(0, 127) as u8;
+            *p = new;
         }
     }
 }
@@ -71,12 +145,16 @@ fn render(frame: &mut Frame, state: &Arc<TuiState>, scatter: bool, show_referenc
 
     let header_h = 1;
     let status_h = 1;
+    let voices_h = 2;
     let params_h = 3;
-    let bottom_h = params_h + status_h;
+    let bottom_h = params_h + voices_h + status_h;
     let scope_min_h = 12;
 
     if area.height < header_h + scope_min_h + bottom_h {
-        let msg = "Terminal too small — need at least 17 rows";
+        let msg = format!(
+            "Terminal too small — need at least {} rows",
+            header_h + scope_min_h + bottom_h
+        );
         let para = Paragraph::new(msg).style(Style::default().fg(Color::Red));
         frame.render_widget(para, area);
         return;
@@ -312,11 +390,16 @@ fn render_event_log(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
 fn render_bottom(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
     let vert = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(2),
+            Constraint::Length(1),
+        ])
         .split(area);
 
     render_params(frame, state, vert[0]);
-    render_status(frame, state, vert[1]);
+    render_voice_pitches(frame, state, vert[1]);
+    render_status(frame, state, vert[2]);
 }
 
 fn render_params(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
@@ -376,6 +459,62 @@ fn render_params(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+fn render_voice_pitches(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
+    let edit = state.voice_edit.read().ok().and_then(|e| *e);
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, chain) in state.chains.iter().enumerate() {
+        if !chain.present {
+            continue;
+        }
+        let label = if i == 0 { "A" } else { "B" };
+        let pitches = chain.gate_voice_pitches.read().ok();
+        if let Some(pitches) = pitches {
+            let mut spans: Vec<Span> = vec![
+                Span::styled(
+                    format!("Chain {} voices: ", label),
+                    Style::default().fg(Color::LightBlue),
+                ),
+            ];
+            for (v, &pitch) in pitches.iter().enumerate() {
+                let is_selected = edit
+                    .map(|e| e.chain_idx == i && e.voice_idx == v)
+                    .unwrap_or(false);
+                let pitch_name = midi_note_name(pitch);
+                let style = if is_selected {
+                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                spans.push(Span::styled(
+                    format!("v{}:{}({}) ", v, pitch, pitch_name),
+                    style,
+                ));
+            }
+            lines.push(Line::from(spans));
+        }
+    }
+
+    if let Some(ref _edit_state) = edit {
+        lines.push(Line::from(vec![Span::styled(
+            "EDIT: Up/Dn=voice  Tab=chain  +/-=pitch  e/Esc=done",
+            Style::default().fg(Color::DarkGray),
+        )]));
+    }
+
+    let block = Block::default().borders(Borders::NONE);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn midi_note_name(pitch: u8) -> String {
+    static NAMES: &[&str] = &[
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    let octave = (pitch as i16 / 12) - 1;
+    let name = NAMES[(pitch % 12) as usize];
+    format!("{}{}", name, octave)
+}
+
 fn render_status(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
     let walls_a = state.chains[0].wall_count.read().ok().map(|g| *g).unwrap_or(0);
     let walls_b = state.chains[1].wall_count.read().ok().map(|g| *g).unwrap_or(0);
@@ -401,7 +540,7 @@ fn render_status(frame: &mut Frame, state: &Arc<TuiState>, area: Rect) {
         Style::default(),
     ));
     segments.push(Span::styled(
-        "Press q to quit  s:scatter  r:ref",
+        "Press q to quit  s:scatter  r:ref  e:edit voices",
         Style::default().fg(Color::DarkGray),
     ));
 

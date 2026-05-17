@@ -70,9 +70,22 @@ fn main() {
 
     let bpm = 60.0 / config.tempo.drive_period_secs;
 
+    let voice_pitches_a: Arc<RwLock<Vec<u8>>> =
+        Arc::new(RwLock::new(config.chain_a.midi.voice_pitches.clone()));
+    let voice_pitches_b: Option<Arc<RwLock<Vec<u8>>>> = config
+        .chain_b
+        .as_ref()
+        .map(|b| Arc::new(RwLock::new(b.midi.voice_pitches.clone())));
+
     let tui_state = if cli.tui {
         let has_b = config.chain_b.is_some();
-        let state = Arc::new(tui::TuiState::new(bpm, Arc::clone(&running), has_b));
+        let state = Arc::new(tui::TuiState::new(
+            bpm,
+            Arc::clone(&running),
+            has_b,
+            Arc::clone(&voice_pitches_a),
+            voice_pitches_b.as_ref().map(Arc::clone),
+        ));
         if let Some(ref c) = config.coupling {
             if let Ok(mut coupl) = state.coupling.write() {
                 *coupl = Some(tui::CouplingInfo {
@@ -104,6 +117,16 @@ fn main() {
         input_listener,
         perturbation_router,
         tui_state.clone(),
+        if cli.tui {
+            Some(Arc::clone(&voice_pitches_a))
+        } else {
+            None
+        },
+        if cli.tui {
+            voice_pitches_b.as_ref().map(Arc::clone)
+        } else {
+            None
+        },
     );
 
     if let Some(tui_handle) = cli.tui.then(|| tui::spawn(tui_state.unwrap())) {

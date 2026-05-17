@@ -39,6 +39,8 @@ impl Runtime {
         input_listener: Option<MidiInputListener>,
         perturbation_router: Option<PerturbationRouter>,
         tui_state: Option<Arc<TuiState>>,
+        voice_pitches_a: Option<Arc<RwLock<Vec<u8>>>>,
+        voice_pitches_b: Option<Arc<RwLock<Vec<u8>>>>,
     ) -> Self {
         let dt_real_secs =
             config.tempo.drive_period_secs / config.chain_a.physics.ticks_per_period as f64;
@@ -59,6 +61,7 @@ impl Runtime {
             targets_a,
             input_listener,
             perturbation_router,
+            voice_pitches_a,
         );
         pipelines.push(chain_a);
 
@@ -79,6 +82,7 @@ impl Runtime {
                 targets_b,
                 None,
                 None,
+                voice_pitches_b,
             );
             pipelines.push(chain_b);
         }

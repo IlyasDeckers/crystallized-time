@@ -3,6 +3,8 @@
 //! Stateful: tracks previous sz values and last-event ticks per output site
 //! so it can debounce and detect signed crossings rather than raw threshold passes.
 
+use std::sync::{Arc, RwLock};
+
 use crystallized_time::config::MidiConfig;
 use crate::chain::SpinChain;
 use crate::config::EventConfig;
@@ -30,6 +32,10 @@ pub struct EventDetector {
     pub config: EventConfig,
     pub midi_config: MidiConfig,
 
+    /// Shared voice pitch overrides. When set, these are read at event time
+    /// instead of `midi_config.voice_pitches`, allowing live editing via TUI.
+    override_pitches: Option<Arc<RwLock<Vec<u8>>>>,
+
     /// prev_sz[k] is the previous z-component for output_sites[k].
     prev_sz: Vec<f64>,
     /// last_event_tick[k] is the tick of the last emission for output_sites[k].
@@ -37,7 +43,12 @@ pub struct EventDetector {
 }
 
 impl EventDetector {
-    pub fn new(config: EventConfig, midi_config: MidiConfig, chain: &SpinChain) -> Self {
+    pub fn new(
+        config: EventConfig,
+        midi_config: MidiConfig,
+        chain: &SpinChain,
+        override_pitches: Option<Arc<RwLock<Vec<u8>>>>,
+    ) -> Self {
         let prev_sz: Vec<f64> = config
             .output_sites
             .iter()
@@ -47,6 +58,7 @@ impl EventDetector {
         Self {
             config,
             midi_config,
+            override_pitches,
             prev_sz,
             last_event_tick,
         }
@@ -69,7 +81,14 @@ impl EventDetector {
             if crossed && debounced {
                 let intensity = ((current_sz - prev).abs() as f32).min(1.0);
                 let channel = self.midi_config.voice_channels.get(k).copied().unwrap_or(0);
-                let pitch = self.midi_config.voice_pitches.get(k).copied().unwrap_or(48);
+                let pitch = self
+                    .override_pitches
+                    .as_ref()
+                    .and_then(|arc| arc.read().ok())
+                    .and_then(|pitches| pitches.get(k).copied())
+                    .unwrap_or_else(|| {
+                        self.midi_config.voice_pitches.get(k).copied().unwrap_or(48)
+                    });
                 events.push(GateEvent {
                     site,
                     voice: k as u8,
