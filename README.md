@@ -10,9 +10,9 @@ This repository contains the first working component of a larger audiovisual ins
 
 **Simulation.** The program runs a model of coupled spins (8 sites by default). A periodic kick is applied to the whole chain at regular intervals. Under the right conditions (appropriate disorder, coupling strength, and temperature), the chain enters a period-doubled phase: each spin flips at half the drive rate. Nothing in the code specifies this rhythm; it emerges from the physics.
 
-**Readout.** Two observables are tracked simultaneously per chain. Selected sites are watched for zero-crossings of sigma_z. Domain walls, the boundaries between adjacent sites pointing in opposite directions, are tracked as mobile objects that appear, drift, and annihilate.
+**Readout.** Three observables are tracked simultaneously per chain. Selected sites are watched for zero-crossings of sigma_z. Domain walls, the boundaries between adjacent sites pointing in opposite directions, are tracked as mobile objects that appear, drift, and annihilate. The summed sigma_z over output sites is emitted as a continuous CC modulation stream, reflecting the chain's instantaneous bias between up and down spin populations.
 
-**MIDI output.** Each zero-crossing produces a short gate pulse, useful for triggering envelopes and rhythmic events. Each domain wall produces a held note: note-on when the wall is born, note-off when it annihilates. Wall motion is reported as a CC stream (position mapped to a configurable CC number) or as discrete repitching when the wall crosses semitone boundaries. A chain clock on its own channel derives from the chain's mean magnetization crossing zero, providing a beat signal that degrades naturally when the chain leaves the locked phase.
+**MIDI output.** Each zero-crossing produces a short gate pulse, useful for triggering envelopes and rhythmic events. The summed-sigma_z CC on a configurable channel and CC number gives a moving modulation source that tracks the collective state of the output sites. Each domain wall produces a held note: note-on when the wall is born, note-off when it annihilates. Wall motion is reported as a CC stream (position mapped to a configurable CC number) or as discrete repitching when the wall crosses semitone boundaries. A chain clock on its own channel derives from the chain's mean magnetization crossing zero, providing a beat signal that degrades naturally when the chain leaves the locked phase.
 
 **Two chains.** A second chain (`chain_b`) can be configured with its own physics, seed, and routing. Chains optionally couple through a configurable shape (currently `mean_field_z`), allowing polyrhythmic interaction where each chain keeps its own period but influences the other.
 
@@ -102,6 +102,11 @@ repitch_on_move = false
 [chain_a.clock]
 channel = 16
 
+[chain_a.modulation]                  # optional summed-sigma_z CC
+enabled = true
+# channel = 1                         # defaults to first gate voice channel
+cc_number = 1
+
 [chain_b]                            # optional second chain
 seed = 83
 
@@ -137,6 +142,8 @@ Channel numbers in the file are 1-based (`1..=16`); MIDI pitches are `0..=127`.
 
 **Clock.** A gate pulse on the configured channel every time the chain's mean magnetization crosses zero. In the locked phase this fires at a stable rate; near a phase boundary it becomes irregular; in the thermal phase it stops.
 
+**Modulation CC.** The sum of sigma_z over the chain's output sites is sampled every tick, mapped linearly to `[0, 127]` centred at sum-zero (CC 64), and emitted on the configured channel and CC number. The emission is change-filtered (sent only when the CC value differs from the last sent value). This gives a continuous modulation stream that mirrors the collective state of the output sites -- all spins up pushes the CC to 127, all down to 0, balanced to 64. Useful for patching to filter cutoff, pulse width, or any destination that benefits from a physics-derived continuous control signal.
+
 **Physics.** The shared `[physics]` block applies to every chain that doesn't define its own `[chain_x.physics]`. Per-chain blocks win when both are present. Fields are all optional inside a physics block; absent fields fall through to defaults. `kick_angle` controls the target sub-harmonic (pi for period-2, 2*pi/3 for period-3, pi/2 for period-4, etc.).
 
 **Coupling.** When both chains are configured, an optional `[coupling]` section enables inter-chain influence. `shape = "mean_field_z"` adds each chain's mean magnetization as a uniform z-field on the other. `strength` sets both directions to the same value; `strength_ab` and `strength_ba` set them separately. The two forms are mutually exclusive. `site_paired` and `shared_drive` shapes parse but are not yet implemented (they log a one-time warning and run with no coupling).
@@ -146,7 +153,7 @@ Channel numbers in the file are 1-based (`1..=16`); MIDI pitches are `0..=127`.
 The loader validates the file before the program starts:
 
 - Channel numbers must be in `1..=16`.
-- No channel can be claimed by more than one signal across gates, walls, and clock, in either chain.
+- No channel can be claimed by more than one signal across gates, walls, modulation, and clock, in either chain.
 - `voice_N` indices must correspond to real chain sites (`N < n_sites`).
 - Pitch and CC numbers must be in range.
 - Coupling strengths must be in `0.0..=2.0`.
