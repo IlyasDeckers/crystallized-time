@@ -26,6 +26,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         config: &Config,
         midi_sender: MidiSender,

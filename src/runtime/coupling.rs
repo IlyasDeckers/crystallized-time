@@ -61,6 +61,7 @@ pub struct CouplingState {
     warned_unimplemented: bool,
 }
 
+#[allow(dead_code)]
 impl CouplingState {
     pub fn new(config: &CouplingConfig) -> Self {
         Self::new_with_targets(

@@ -4,9 +4,7 @@
 //! raw `rosc::OscPacket` values onto our internal `InboundMessage` enum,
 //! discarding anything malformed or unrecognized.
 
-use rosc::{OscMessage, OscPacket, OscType};
-
-use rosc::{encoder, OscBundle, OscPacket as RoscPacket, OscTime, OscType as RoscOscType};
+use rosc::{encoder, OscBundle, OscMessage, OscPacket, OscPacket as RoscPacket, OscTime, OscType, OscType as RoscOscType};
 use crystallized_time::chain_id::ChainId;
 
 const TIME_IMMEDIATE: OscTime = OscTime { seconds: 0, fractional: 1 };

@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use super::{ChainConfig, ClockConfig, Config, CouplingConfig, CouplingShape, EventConfig, InputConfig, MidiConfig, OscConfig, PerturbationConfig, PerturbationKindConfig, PhysicsConfig, TempoConfig, WallConfig, WallMidiConfig};
+use super::{ChainConfig, ClockConfig, Config, CouplingConfig, CouplingShape, EventConfig, InputConfig, MidiConfig, OscConfig, PerturbationConfig, PerturbationKindConfig, PhysicsConfig, PhysicsTargets, TempoConfig, WallConfig, WallMidiConfig};
 
 // --- Public API ------------------------------------------------------------
 
@@ -28,7 +28,7 @@ pub enum ConfigError {
     },
     Parse {
         path: PathBuf,
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
     Validation(String),
 }
@@ -60,7 +60,7 @@ pub fn load(path: &Path) -> Result<Config, ConfigError> {
 
     let toml_config: TomlConfig = toml::from_str(&raw).map_err(|e| ConfigError::Parse {
         path: path.to_path_buf(),
-        source: e,
+        source: Box::new(e),
     })?;
 
     toml_config.into_config()
@@ -95,6 +95,7 @@ struct OscSection {
     listen_port: Option<u16>,
     send_address: Option<String>,
     state_rate_hz: Option<f64>,
+    state_spins_rate_hz: Option<f64>,
     enable_state: Option<bool>,
 }
 
@@ -212,6 +213,11 @@ impl TomlConfig {
         let (chain_b, claims_b) = match &self.chain_b {
             Some(section) => {
                 let (cfg, claims) = build_chain(section, "chain_b", shared_physics)?;
+                if cfg.physics.ticks_per_period != chain_a.physics.ticks_per_period {
+                    return Err(ConfigError::Validation(
+                        "chain_b.physics.ticks_per_period must match chain_a.physics.ticks_per_period".to_string(),
+                    ));
+                }
                 (Some(cfg), claims)
             }
             None => (None, Vec::new()),
@@ -243,6 +249,9 @@ fn build_osc(section: Option<OscSection>) -> OscConfig {
             listen_port: s.listen_port,
             send_address: s.send_address,
             state_rate_hz: s.state_rate_hz.unwrap_or(defaults.state_rate_hz),
+            state_spins_rate_hz: s
+                .state_spins_rate_hz
+                .unwrap_or(defaults.state_spins_rate_hz),
             enable_state: s.enable_state.unwrap_or(defaults.enable_state),
         },
         None => defaults,
@@ -308,10 +317,10 @@ fn build_physics(section: Option<PhysicsSection>) -> PhysicsConfig {
     let Some(s) = section else { return defaults };
 
     PhysicsConfig {
-        kt: s.kt.unwrap_or(defaults.kt),
-        eps: s.eps.unwrap_or(defaults.eps),
-        j: s.j.unwrap_or(defaults.j),
-        w: s.w.unwrap_or(defaults.w),
+        kt: PhysicsTargets::clamp_kt(s.kt.unwrap_or(defaults.kt)),
+        eps: PhysicsTargets::clamp_eps(s.eps.unwrap_or(defaults.eps)),
+        j: PhysicsTargets::clamp_j(s.j.unwrap_or(defaults.j)),
+        w: PhysicsTargets::clamp_w(s.w.unwrap_or(defaults.w)),
         n_sites: s.n_sites.unwrap_or(defaults.n_sites),
         ticks_per_period: s.ticks_per_period.unwrap_or(defaults.ticks_per_period),
         dt: s.dt.unwrap_or(defaults.dt),
@@ -661,7 +670,7 @@ mod tests {
     fn load_str(s: &str) -> Result<Config, ConfigError> {
         let raw: TomlConfig = toml::from_str(s).map_err(|e| ConfigError::Parse {
             path: PathBuf::from("<test>"),
-            source: e,
+            source: Box::new(e),
         })?;
         raw.into_config()
     }
@@ -682,7 +691,7 @@ mod tests {
             channel = 16
         "#;
         let config = load_str(toml).expect("should parse");
-        assert_eq!(config.seed, 7);
+        assert_eq!(config.chain_a.seed, 7);
         assert_eq!(config.chain_a.midi.voice_channels, vec![0, 1, 2, 3]);
         assert_eq!(config.chain_a.events.output_sites, vec![0, 2, 4, 6]);
         // Clock channel was 16 (1-based) → 15 (0-based)
@@ -723,8 +732,8 @@ mod tests {
             channel = 16
         "#;
         let config = load_str(toml).expect("should parse");
-        assert!(config.walls.enabled);
-        assert_eq!(config.wall_midi.channels, vec![4, 5, 6, 7]);
+        assert!(config.chain_a.walls.enabled);
+        assert_eq!(config.chain_a.wall_midi.channels, vec![4, 5, 6, 7]);
     }
 
     #[test]
@@ -834,7 +843,7 @@ mod tests {
             channel = 16
         "#;
         let config = load_str(toml).expect("should parse");
-        assert!(config.wall_midi.motion_cc.is_none());
+        assert!(config.chain_a.wall_midi.motion_cc.is_none());
     }
 
     #[test]
@@ -970,7 +979,7 @@ mod tests {
     "#;
         let config = load_str(toml).expect("should parse");
         let c = config.coupling.expect("coupling present");
-        assert_eq!(c.shape, crystallized_time::config::CouplingShape::MeanFieldZ);
+        assert_eq!(c.shape, crate::config::CouplingShape::MeanFieldZ);
         assert!((c.strength_ab - 0.15).abs() < 1e-9);
         assert!((c.strength_ba - 0.15).abs() < 1e-9);
     }
@@ -1066,7 +1075,7 @@ mod tests {
             "#,
                 shape
             );
-            load_str(&toml).expect(&format!("{} should parse", shape));
+            load_str(&toml).unwrap_or_else(|_| panic!("{} should parse", shape));
         }
     }
 }

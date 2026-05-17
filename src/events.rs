@@ -8,6 +8,7 @@ use crate::chain::SpinChain;
 use crate::config::EventConfig;
 
 /// A single gate-trigger event emitted by the substrate.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct GateEvent {
     /// Index of the site that fired (into the chain, not into output_sites).

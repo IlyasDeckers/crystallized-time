@@ -97,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rows.push((eps, j, class, best_corr, best_tau));
 
             done += 1;
-            if done % 50 == 0 || done == total {
+            if done.is_multiple_of(50) || done == total {
                 let elapsed = start.elapsed().as_secs_f64();
                 println!("  {}/{} ({:.1}s, ~{:.1}s remaining)",
                          done, total, elapsed,
@@ -230,6 +230,7 @@ fn write_csv_header(w: &mut impl Write, max_tau: usize) -> std::io::Result<()> {
     writeln!(w)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_csv_row(
     w: &mut impl Write,
     eps: f64, j: f64, w_param: f64, kt: f64, seed: u64,

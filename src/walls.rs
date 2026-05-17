@@ -6,6 +6,7 @@
 //! pairs, they annihilate in pairs.
 
 /// A domain wall as a tracked object.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Wall {
     /// Persistent identity. Assigned at creation, not reused.
@@ -20,9 +21,15 @@ pub struct Wall {
     /// Sign of the left side. +1 if sites left of the wall are positive,
     /// -1 if negative. Flips every drive period in the time-crystal phase.
     pub left_sign: i8,
+    /// Position last reported in a `Moved` event. Used to smooth `/wall/moved`
+    /// emission so a wall drifting slowly across many ticks doesn't produce
+    /// one Moved message per tick. Set to `position` at creation so the
+    /// first qualifying drift is measured from birth.
+    pub last_emitted_position: f64,
 }
 
 /// An event emitted by the wall detector on a given tick.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum WallEvent {
     Created {
@@ -51,9 +58,9 @@ use crate::config::WallConfig;
 /// Watches a chain and produces walls each tick.
 pub struct WallDetector {
     pub config: WallConfig,
-    /// Walls present at the previous tick. Unused in Step 2; populated in Step 3.
+    /// Walls present at the previous tick.
     walls: Vec<Wall>,
-    /// Monotonic counter for assigning new wall IDs. Unused in Step 2.
+    /// Monotonic counter for assigning new wall IDs.
     next_id: u64,
 }
 
@@ -68,13 +75,19 @@ impl WallDetector {
 
     /// Scan the chain, match this tick's walls against the previous tick's,
     /// and emit Created / Destroyed / Moved events for the differences.
+    ///
+    /// `Moved` is emitted when the wall has drifted more than
+    /// `config.move_threshold` from the position last reported. This rate-
+    /// limits motion messages for slow drift (no per-tick spam) without
+    /// adding any wall-clock state — purely a function of position change
+    /// since the last emit.
     pub fn check(&mut self, chain: &SpinChain) -> Vec<WallEvent> {
         if !self.config.enabled {
             return Vec::new();
         }
-        
+
         let mut candidates = self.scan_candidates(chain);
-        
+
         let n_prev = self.walls.len();
         let mut matched_prev = vec![false; n_prev];
         let mut candidate_match: Vec<Option<usize>> = vec![None; candidates.len()];
@@ -98,11 +111,12 @@ impl WallDetector {
                 matched_prev[pi] = true;
             }
         }
-        
+
         let mut events: Vec<WallEvent> = Vec::new();
 
         // Created: candidates with no match. Assign fresh IDs.
-        // Moved:   candidates with a match, position changed > move_threshold.
+        // Moved:   matched candidates whose drift since their last emitted
+        //          position exceeds move_threshold.
         // We also build the new wall list as we go.
         let mut new_walls: Vec<Wall> = Vec::with_capacity(candidates.len());
 
@@ -114,15 +128,22 @@ impl WallDetector {
                     candidate.birth_tick = prev.birth_tick;
                     candidate.velocity = candidate.position - prev.position;
 
-                    let delta = (candidate.position - prev.position).abs();
-                    if delta > self.config.move_threshold {
+                    // Drift since last reported position, not since last tick.
+                    // A wall moving 0.05/tick that hasn't been reported in
+                    // 4 ticks has drifted 0.2; with threshold 0.1, it now
+                    // qualifies for one Moved event covering the whole arc.
+                    let drift = (candidate.position - prev.last_emitted_position).abs();
+                    if drift > self.config.move_threshold {
                         events.push(WallEvent::Moved {
                             id: candidate.id,
-                            from: prev.position,
+                            from: prev.last_emitted_position,
                             to: candidate.position,
                             velocity: candidate.velocity,
                             tick: chain.tick,
                         });
+                        candidate.last_emitted_position = candidate.position;
+                    } else {
+                        candidate.last_emitted_position = prev.last_emitted_position;
                     }
                     new_walls.push(candidate.clone());
                 }
@@ -130,6 +151,7 @@ impl WallDetector {
                     candidate.id = self.next_id;
                     self.next_id += 1;
                     candidate.velocity = 0.0;
+                    candidate.last_emitted_position = candidate.position;
                     events.push(WallEvent::Created {
                         id: candidate.id,
                         position: candidate.position,
@@ -152,7 +174,7 @@ impl WallDetector {
                 });
             }
         }
-        
+
         self.walls = new_walls;
 
         events
@@ -183,7 +205,7 @@ impl WallDetector {
                     let l_abs = left.abs();
                     let r_abs = right.abs();
                     let denom = l_abs + r_abs;
-                    
+
                     i as f64 + l_abs / denom
                 } else {
                     i as f64 + 0.5
@@ -195,6 +217,7 @@ impl WallDetector {
                     velocity: 0.0,
                     birth_tick: chain.tick,
                     left_sign: if left > 0.0 { 1 } else { -1 },
+                    last_emitted_position: position,
                 });
             }
         }

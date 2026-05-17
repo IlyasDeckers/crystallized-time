@@ -250,7 +250,7 @@ impl SpinChain {
         self.spins = new_spins;
 
         self.tick += 1;
-        if self.tick > 0 && self.tick % snapshot.ticks_per_period as u64 == 0 {
+        if self.tick > 0 && self.tick.is_multiple_of(snapshot.ticks_per_period as u64) {
             self.apply_drive_pulse(snapshot.eps, snapshot.kick_angle);
         }
     }

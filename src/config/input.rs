@@ -6,7 +6,7 @@
 
 use crate::chain::Axis;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct InputConfig {
     /// Perturbation behavior. Always present once the section is loaded;
     /// the spec's defaults apply when fields are omitted.
@@ -50,10 +50,3 @@ impl Default for PerturbationConfig {
     }
 }
 
-impl Default for InputConfig {
-    fn default() -> Self {
-        Self {
-            perturbation: PerturbationConfig::default(),
-        }
-    }
-}

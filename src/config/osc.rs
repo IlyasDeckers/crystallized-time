@@ -10,11 +10,16 @@ pub struct OscConfig {
     /// Destination "host:port" for outbound events and state. None
     /// disables the sender thread entirely.
     pub send_address: Option<String>,
-    /// Target rate for state messages, in Hz. Throttling is wall-clock-based,
-    /// so the rate is honest regardless of BPM. At default 120 BPM × 25
-    /// ticks/period = 50 ticks/sec, every tick ships state. At higher tick
-    /// rates the throttle starts skipping ticks.
+    /// Target rate for scalar state messages (`/state/magnetization`,
+    /// `/state/wall_count`), in Hz. Wall-clock-based, so the rate is
+    /// honest regardless of BPM. Set to 0 to disable rate-gating
+    /// (change-filtering still applies).
     pub state_rate_hz: f64,
+    /// Target rate for the heavier `/state/spins` vector messages, in Hz.
+    /// Defaults to half of `state_rate_hz` since spin vectors are the
+    /// biggest payload and change slowly in the locked phase. Set to 0
+    /// to disable rate-gating.
+    pub state_spins_rate_hz: f64,
     /// When false, state messages are not pushed even if send_address is set.
     /// Events still flow. Useful for bandwidth-sensitive setups where the
     /// receiver only needs event triggers.
@@ -27,6 +32,7 @@ impl Default for OscConfig {
             listen_port: None,
             send_address: None,
             state_rate_hz: 50.0,
+            state_spins_rate_hz: 25.0,
             enable_state: true,
         }
     }

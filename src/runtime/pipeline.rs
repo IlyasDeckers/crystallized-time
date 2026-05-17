@@ -39,6 +39,7 @@ pub struct ChainPipeline {
 }
 
 impl ChainPipeline {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ChainId,
         physics: PhysicsConfig,
