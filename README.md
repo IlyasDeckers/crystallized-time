@@ -48,8 +48,42 @@ cargo run --release --bin sweep -- --output sweep.csv
 | `--input-port <N>` | | Input port index. Absent leaves the chain autonomous. |
 | `--config <path>` | `config.toml` | Path to the TOML config file. |
 | `--periods <N>` | `20000` | Number of drive periods to run. |
+| `--tui` | | Enable the ratatui-based terminal dashboard.
 
 Everything else (tempo, RNG seed, physics, MIDI routing, coupling, OSC, perturbation mapping) is set in the config file.
+
+---
+
+## TUI monitor
+
+Pass `--tui` to launch a terminal dashboard inside the same window. The dashboard updates at ~30 fps and shows:
+
+- **Magnetization scope** — per-chain mean σz over the last ~1000 ticks, as a line or scatter chart.
+- **Event log** — gate triggers, clock pulses, wall creation/destruction, OSC and MIDI input activity.
+- **Physics parameters** — live kT, epsilon, J, omega, and mean magnetization per chain; coupling strengths.
+- **Voice pitch editor** — see and modify gate voice pitches in real time.
+
+### Keybindings
+
+| Key | Action |
+|---|---|
+| `q` / `Esc` | Quit. |
+| `s` | Toggle scatter/line mode on the scope chart. |
+| `r` | Toggle reference line. |
+| `e` | Enter voice pitch edit mode (or exit, when already editing). |
+
+### Voice pitch editor
+
+Press `e` to enter edit mode. The voice row highlights the currently selected voice in yellow.
+
+| Key | Action |
+|---|---|
+| `Up` / `Down` | Move between voices on the current chain. |
+| `Tab` | Switch between chains (when chain B is active). |
+| `+` / `-` | Raise or lower the selected pitch by 1 semitone (clamped to 0–127). |
+| `e` / `Esc` | Exit edit mode. |
+
+Pitch changes take effect immediately — the next gate event from that voice uses the updated pitch. Note names are displayed alongside raw MIDI numbers (e.g. `v0:48(C3)`).
 
 ---
 
