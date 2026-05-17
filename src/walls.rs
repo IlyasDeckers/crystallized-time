@@ -20,12 +20,18 @@ pub struct Wall {
     pub birth_tick: u64,
     /// Sign of the left side. +1 if sites left of the wall are positive,
     /// -1 if negative. Flips every drive period in the time-crystal phase.
+    /// Currently computed but not used as a signal — deferred per the
+    /// spec's "Open items" (orientation-as-signal is a future feature).
     pub left_sign: i8,
     /// Position last reported in a `Moved` event. Used to smooth `/wall/moved`
     /// emission so a wall drifting slowly across many ticks doesn't produce
     /// one Moved message per tick. Set to `position` at creation so the
     /// first qualifying drift is measured from birth.
     pub last_emitted_position: f64,
+    /// Average |sz| of the two flanking sites at wall creation. Used by
+    /// the voice allocator to derive note-on velocity: high order near
+    /// the wall → sharp attack, low order (thermal) → soft.
+    pub local_order: f64,
 }
 
 /// An event emitted by the wall detector on a given tick.
@@ -36,6 +42,9 @@ pub enum WallEvent {
         id: u64,
         position: f64,
         tick: u64,
+        /// Average |sz| of the two sites flanking this wall at birth.
+        /// Used to derive velocity (high order → sharp attack).
+        local_order: f64,
     },
     Destroyed {
         id: u64,
@@ -156,6 +165,7 @@ impl WallDetector {
                         id: candidate.id,
                         position: candidate.position,
                         tick: chain.tick,
+                        local_order: candidate.local_order,
                     });
                     new_walls.push(candidate.clone());
                 }
@@ -218,6 +228,7 @@ impl WallDetector {
                     birth_tick: chain.tick,
                     left_sign: if left > 0.0 { 1 } else { -1 },
                     last_emitted_position: position,
+                    local_order: (left.abs() + right.abs()) / 2.0,
                 });
             }
         }

@@ -50,7 +50,7 @@ CLI process opens a MIDI output port; four voices emit gates in the default-para
 
 ## Stage 2.5 — Substrate clock, per-chain voice, modulation streams
 
-`Status: done.`
+`Status: done.` Modulation CC configured via `[chain_a.modulation]` TOML section (channel, cc_number, enabled).
 
 Reorganize the output of one chain so it produces a complete musical performance (rhythm, pitch, modulation, clock) before chain B arrives. No physics changes.
 
@@ -251,6 +251,11 @@ repitch_on_move = false
 
 [chain_a.clock]
 channel = 16
+
+[chain_a.modulation]  # optional; omit to disable
+enabled = true
+channel = 1           # defaults to first gate voice channel
+cc_number = 1
 ```
 
 ### Wall voice routing — design choice taken
@@ -408,7 +413,7 @@ Validate aesthetic with StyleGAN3 or SD on brutalist material. Choose poles and 
 
 ## Stage 3+ roadmap
 
-`Status: planning.`
+`Status: ~80% implemented. Two-chain, coupling, per-chain routing, and OSC namespacing work. sweep tool is single-chain only; site_paired and shared_drive coupling shapes are stubs.`
 
 ### Stage 3 — Polyrhythmic two-chain
 

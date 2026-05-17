@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use super::{ChainConfig, ClockConfig, Config, CouplingConfig, CouplingShape, EventConfig, InputConfig, MidiConfig, OscConfig, PerturbationConfig, PerturbationKindConfig, PhysicsConfig, PhysicsTargets, TempoConfig, WallConfig, WallMidiConfig};
+use super::{ChainConfig, ClockConfig, Config, CouplingConfig, CouplingShape, EventConfig, InputConfig, MidiConfig, ModulationConfig, OscConfig, PerturbationConfig, PerturbationKindConfig, PhysicsConfig, PhysicsTargets, TempoConfig, WallConfig, WallMidiConfig};
 
 // --- Public API ------------------------------------------------------------
 
@@ -145,6 +145,7 @@ struct ChainSection {
     gates: GatesSection,
     walls: Option<WallsSection>,
     clock: ClockSection,
+    modulation: Option<ModulationSection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +195,13 @@ struct ClockSection {
     enabled: Option<bool>,
     pitch: Option<u8>,
     gate_length_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModulationSection {
+    enabled: Option<bool>,
+    channel: Option<u8>,
+    cc_number: Option<u8>,
 }
 
 // --- Conversion ------------------------------------------------------------
@@ -533,6 +541,41 @@ fn build_clock(
     })
 }
 
+fn build_modulation(
+    section: &Option<ModulationSection>,
+    chain_label: &str,
+    fallback_channel: Option<u8>,
+) -> Result<ModulationConfig, ConfigError> {
+    let defaults = ModulationConfig::default();
+    let Some(s) = section else { return Ok(defaults) };
+    let enabled = s.enabled.unwrap_or(defaults.enabled);
+    if !enabled {
+        return Ok(ModulationConfig { enabled: false, ..defaults });
+    }
+    let channel_1b = s.channel
+        .or_else(|| fallback_channel.map(|c| c + 1))
+        .unwrap_or(1);
+    let channel_0b = validate_channel_1based(
+        channel_1b,
+        &format!("{}.modulation.channel", chain_label),
+    )?;
+    let cc_number = match s.cc_number {
+        Some(n) if n <= 127 => n,
+        Some(n) => {
+            return Err(ConfigError::Validation(format!(
+                "{}.modulation.cc_number must be in 0..=127 (got {})",
+                chain_label, n
+            )));
+        }
+        None => defaults.cc_number,
+    };
+    Ok(ModulationConfig {
+        enabled: true,
+        channel: channel_0b,
+        cc_number,
+    })
+}
+
 fn build_events(
     section: &GatesSection,
     chain_label: &str,
@@ -560,6 +603,7 @@ fn build_chain(
     let (walls, wall_midi, wall_claims) = build_walls(section.walls.as_ref(), label)?;
     let clock = build_clock(&section.clock, label)?;
     let events = build_events(&section.gates, label)?;
+    let modulation = build_modulation(&section.modulation, label, midi.voice_channels.first().copied())?;
 
     for &site in &events.output_sites {
         if site >= physics.n_sites {
@@ -576,6 +620,12 @@ fn build_chain(
         channel: clock.channel,
         label: format!("{}.clock", label),
     });
+    if modulation.enabled {
+        claims.push(ChannelClaim {
+            channel: modulation.channel,
+            label: format!("{}.modulation", label),
+        });
+    }
 
     let chain_cfg = ChainConfig {
         physics,
@@ -584,6 +634,7 @@ fn build_chain(
         clock,
         walls,
         wall_midi,
+        modulation,
         seed,
     };
 

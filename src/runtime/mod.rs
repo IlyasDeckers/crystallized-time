@@ -51,6 +51,7 @@ impl Runtime {
             config.chain_a.clock.clone(),
             config.chain_a.walls.clone(),
             config.chain_a.wall_midi.clone(),
+            config.chain_a.modulation.clone(),
             config.chain_a.seed,
             targets_a,
             input_listener,
@@ -70,6 +71,7 @@ impl Runtime {
                 b_cfg.clock.clone(),
                 b_cfg.walls.clone(),
                 b_cfg.wall_midi.clone(),
+                b_cfg.modulation.clone(),
                 b_cfg.seed,
                 targets_b,
                 None,
@@ -80,6 +82,13 @@ impl Runtime {
 
         let coupling = match (&config.coupling, &config.chain_b, coupling_targets) {
             (Some(c), Some(_), Some(targets)) => Some(CouplingState::new_with_targets(c, targets)),
+            (Some(_), None, _) => {
+                eprintln!(
+                    "warning: [coupling] section is present in the config but chain_b is \
+                     absent; coupling will not run"
+                );
+                None
+            }
             _ => None,
         };
 
@@ -143,10 +152,11 @@ impl Runtime {
             p.apply_input_perturbations();
         }
 
-        // Phase 4: emit. Site events, clock, walls. Per-pipeline.
+        // Phase 4: emit. Site events, clock, modulation CC, walls. Per-pipeline.
         for p in &mut self.pipelines {
             p.emit_site_events(&self.midi_sender, self.osc_sink.as_mut());
             p.tick_clock(&self.midi_sender, self.osc_sink.as_mut());
+            p.tick_modulation(&self.midi_sender);
             p.process_walls(&self.midi_sender, self.osc_sink.as_mut());
         }
 

@@ -56,8 +56,8 @@ impl WallVoiceAllocator {
         osc_sink: Option<&mut crate::osc_io::OscSink>,
     ) {
         match event {
-            WallEvent::Created { id, position, tick } => {
-                self.handle_created(*id, *position, *tick, sender, osc_sink);
+            WallEvent::Created { id, position, tick, local_order } => {
+                self.handle_created(*id, *position, *tick, *local_order, sender, osc_sink);
             }
             WallEvent::Destroyed {
                 id,
@@ -147,6 +147,7 @@ impl WallVoiceAllocator {
         id: u64,
         position: f64,
         tick: u64,
+        local_order: f64,
         sender: &MidiSender,
         osc_sink: Option<&mut crate::osc_io::OscSink>,
     ) {
@@ -168,7 +169,7 @@ impl WallVoiceAllocator {
         };
 
         let pitch = self.position_to_pitch(position);
-        let velocity = 96;
+        let velocity = (local_order * 127.0).clamp(1.0, 127.0) as u8;
 
         if let Some(cc) = self.config.motion_cc {
             if !self.config.repitch_on_move {

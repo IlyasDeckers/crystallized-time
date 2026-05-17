@@ -6,7 +6,7 @@
 # Comment a section out (or delete it) to fall back to compiled defaults.
 
 [tempo]
-bpm = 17
+bpm = 17     # drive period ~3.5 s — the author's piece uses a slow fundamental
 
 # OSC. Comment out listen_port / send_address to disable each side.
 [osc]
@@ -57,6 +57,11 @@ repitch_on_move = true
 [chain_b.clock]
 channel = 15
 
+# [chain_b.modulation]
+# enabled = true
+# channel = 9
+# cc_number = 2
+
 # Gate voices. `voice_N` means "listen to chain site N". Default mapping:
 # sites 0, 2, 4, 6 all on channel 1, with a Cmaj7 voicing (C3, E3, G3, B3).
 [chain_a.gates]
@@ -82,6 +87,12 @@ repitch_on_move = true
 [chain_a.clock]
 channel = 16
 
+# Modulation CC (optional). Uncomment to send per-tick summed σ_z on a CC.
+# [chain_a.modulation]
+# enabled = true
+# channel = 1    # defaults to first gate voice channel if omitted
+# cc_number = 1
+
 [coupling]
 shape = "mean_field_z"
 strength = 0 # convenience: sets both directions
@@ -93,6 +104,7 @@ strength = 0 # convenience: sets both directions
 [input.perturbation]
 base_note = 60         # MIDI note that maps to site 0. C4 by default.
 kind = "flip"        # "flip" | "rotate" | "field_spike"
-axis = "x"             # rotation axis or field-spike direction
-magnitude = 0.6        # angle in radians (rotate) or field strength (spike)
+# axis and magnitude are ignored when kind = "flip"; uncomment for rotate / field_spike:
+# axis = "x"
+# magnitude = 0.6
 velocity_scale = 1.0   # 1.0 = full mag at v127, 0 = silent

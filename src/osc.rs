@@ -4,7 +4,7 @@
 //! raw `rosc::OscPacket` values onto our internal `InboundMessage` enum,
 //! discarding anything malformed or unrecognized.
 
-use rosc::{encoder, OscBundle, OscMessage, OscPacket, OscPacket as RoscPacket, OscTime, OscType, OscType as RoscOscType};
+use rosc::{encoder, OscBundle, OscMessage, OscPacket, OscTime, OscType};
 use crystallized_time::chain_id::ChainId;
 
 const TIME_IMMEDIATE: OscTime = OscTime { seconds: 0, fractional: 1 };
@@ -160,9 +160,9 @@ pub fn serialize_bundle(events: &[OutboundEvent]) -> Vec<u8> {
         return Vec::new();
     }
 
-    let content: Vec<RoscPacket> = events
+    let content: Vec<OscPacket> = events
         .iter()
-        .map(|e| RoscPacket::Message(to_message(e)))
+        .map(|e| OscPacket::Message(to_message(e)))
         .collect();
 
     let bundle = OscBundle {
@@ -170,7 +170,7 @@ pub fn serialize_bundle(events: &[OutboundEvent]) -> Vec<u8> {
         content,
     };
 
-    encoder::encode(&RoscPacket::Bundle(bundle)).unwrap_or_default()
+    encoder::encode(&OscPacket::Bundle(bundle)).unwrap_or_default()
 }
 
 fn to_message(event: &OutboundEvent) -> rosc::OscMessage {
@@ -178,53 +178,53 @@ fn to_message(event: &OutboundEvent) -> rosc::OscMessage {
         OutboundEvent::WallCreated { chain, id, position, channel } => rosc::OscMessage {
             addr: format!("{}/wall/created", chain.osc_prefix()),
             args: vec![
-                RoscOscType::Int(*id as i32),
-                RoscOscType::Float(*position as f32),
-                RoscOscType::Int(*channel as i32),
+                OscType::Int(*id as i32),
+                OscType::Float(*position as f32),
+                OscType::Int(*channel as i32),
             ],
         },
         OutboundEvent::WallDestroyed { chain, id, last_position, lifetime_ticks } => rosc::OscMessage {
             addr: format!("{}/wall/destroyed", chain.osc_prefix()),
             args: vec![
-                RoscOscType::Int(*id as i32),
-                RoscOscType::Float(*last_position as f32),
-                RoscOscType::Int(*lifetime_ticks as i32),
+                OscType::Int(*id as i32),
+                OscType::Float(*last_position as f32),
+                OscType::Int(*lifetime_ticks as i32),
             ],
         },
         OutboundEvent::WallMoved { chain, id, from, to, velocity } => rosc::OscMessage {
             addr: format!("{}/wall/moved", chain.osc_prefix()),
             args: vec![
-                RoscOscType::Int(*id as i32),
-                RoscOscType::Float(*from as f32),
-                RoscOscType::Float(*to as f32),
-                RoscOscType::Float(*velocity as f32),
+                OscType::Int(*id as i32),
+                OscType::Float(*from as f32),
+                OscType::Float(*to as f32),
+                OscType::Float(*velocity as f32),
             ],
         },
         OutboundEvent::SiteEvent { chain, site, voice, intensity } => rosc::OscMessage {
             addr: format!("{}/site/event", chain.osc_prefix()),
             args: vec![
-                RoscOscType::Int(*site as i32),
-                RoscOscType::Int(*voice as i32),
-                RoscOscType::Float(*intensity),
+                OscType::Int(*site as i32),
+                OscType::Int(*voice as i32),
+                OscType::Float(*intensity),
             ],
         },
         OutboundEvent::ClockPulse { chain, magnetization } => rosc::OscMessage {
             addr: format!("{}/clock/pulse", chain.osc_prefix()),
             args: vec![
-                RoscOscType::Float(*magnetization as f32),
+                OscType::Float(*magnetization as f32),
             ],
         },
         OutboundEvent::StateSpins { chain, values } => rosc::OscMessage {
             addr: format!("{}/state/spins", chain.osc_prefix()),
-            args: values.iter().map(|v| RoscOscType::Float(*v)).collect(),
+            args: values.iter().map(|v| OscType::Float(*v)).collect(),
         },
         OutboundEvent::StateMagnetization { chain, magnetization } => rosc::OscMessage {
             addr: format!("{}/state/magnetization", chain.osc_prefix()),
-            args: vec![RoscOscType::Float(*magnetization)],
+            args: vec![OscType::Float(*magnetization)],
         },
         OutboundEvent::StateWallCount { chain, count } => rosc::OscMessage {
             addr: format!("{}/state/wall_count", chain.osc_prefix()),
-            args: vec![RoscOscType::Int(*count)],
+            args: vec![OscType::Int(*count)],
         },
     }
 }

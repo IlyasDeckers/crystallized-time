@@ -2,6 +2,7 @@ mod cli;
 mod clock;
 mod events;
 mod midi;
+mod modulation;
 mod osc;
 mod osc_io;
 mod runtime;
@@ -12,6 +13,11 @@ mod input;
 mod perturbation;
 
 use crate::cli::Cli;
+// These `use` imports bring `chain` and `config` into the binary crate root so
+// that in-crate modules (clock.rs, events.rs, walls.rs, etc.) can reference
+// `crate::chain::*` and `crate::config::*` without an explicit dependency on
+// the library crate name. Keep this line unless every sub-module is migrated
+// to `crystallized_time::chain` / `crystallized_time::config`.
 use crystallized_time::{chain, config};
 use crate::config::{config_file, Config, PhysicsTargets};
 use clap::Parser;

@@ -67,7 +67,6 @@ impl MidiSender {
     pub fn send_gate(&self, event: GateEvent) {
         let channel = event.channel;
         if channel > 15 {
-            eprintln!("warning: invalid channel {} on gate event", channel);
             return;
         }
         let pitch = event.pitch;

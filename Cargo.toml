@@ -2,8 +2,8 @@
 name = "crystallized_time"
 version = "0.1.0"
 edition = "2021"
-description = "Time-crystal-driven MIDI gate generator (Stage 1-2)"
-license = "MIT OR Apache-2.0"
+description = "Time-crystal-driven MIDI generator with OSC parameter control and MIDI input perturbation"
+license = "MIT"
 
 [dependencies]
 midir = "0.10"

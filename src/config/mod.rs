@@ -5,20 +5,19 @@ pub mod config_file;
 mod coupling;
 mod events;
 mod midi;
+mod modulation;
 mod osc;
 mod physics;
 mod tempo;
 mod walls;
 mod input;
 
-// use coupling::CouplingState;
-// use pipeline::ChainPipeline;
-
 pub use clock::ClockConfig;
 pub use coupling::{CouplingConfig, CouplingShape};
 pub use events::EventConfig;
 pub use input::{InputConfig, PerturbationConfig, PerturbationKindConfig};
 pub use midi::MidiConfig;
+pub use modulation::ModulationConfig;
 pub use osc::OscConfig;
 pub use physics::{
     apply_smoothing, apply_smoothing_to_f64,
@@ -45,5 +44,6 @@ pub struct ChainConfig {
     pub clock: ClockConfig,
     pub walls: WallConfig,
     pub wall_midi: WallMidiConfig,
+    pub modulation: ModulationConfig,
     pub seed: u64,
 }

@@ -6,6 +6,7 @@ use crate::clock::ClockEmitter;
 use crate::events::EventDetector;
 use crate::input::MidiInputListener;
 use crate::midi::MidiSender;
+use crate::modulation::ModulationEmitter;
 use crate::osc::OutboundEvent;
 use crate::osc_io::OscSink;
 use crate::perturbation::PerturbationRouter;
@@ -20,6 +21,8 @@ use crystallized_time::config::{
 use rand::rngs::StdRng;
 use std::sync::{Arc, RwLock};
 
+use crystallized_time::config::ModulationConfig;
+
 pub struct ChainPipeline {
     pub id: ChainId,
     pub chain: SpinChain,
@@ -30,6 +33,7 @@ pub struct ChainPipeline {
     clock_emitter: ClockEmitter,
     wall_detector: WallDetector,
     wall_voicer: WallVoiceAllocator,
+    modulation_emitter: ModulationEmitter,
     rng: StdRng,
 
     input_listener: Option<MidiInputListener>,
@@ -48,6 +52,7 @@ impl ChainPipeline {
         clock_cfg: crystallized_time::config::ClockConfig,
         walls_cfg: crystallized_time::config::WallConfig,
         wall_midi_cfg: crystallized_time::config::WallMidiConfig,
+        modulation_cfg: ModulationConfig,
         seed: u64,
         targets: Arc<RwLock<PhysicsTargets>>,
         input_listener: Option<MidiInputListener>,
@@ -59,10 +64,12 @@ impl ChainPipeline {
         let physics_arc = Arc::new(ArcSwap::from_pointee(physics.clone()));
         let chain = SpinChain::new(Arc::clone(&physics_arc), &mut rng);
 
-        let detector = EventDetector::new(events_cfg, midi_cfg, &chain);
+        let detector = EventDetector::new(events_cfg.clone(), midi_cfg, &chain);
         let clock_emitter = ClockEmitter::new(clock_cfg, &chain, id);
         let wall_detector = WallDetector::new(walls_cfg);
         let wall_voicer = WallVoiceAllocator::new(wall_midi_cfg, &physics, id);
+        let modulation_emitter =
+            ModulationEmitter::new(modulation_cfg, events_cfg.output_sites);
 
         Self {
             id,
@@ -73,6 +80,7 @@ impl ChainPipeline {
             clock_emitter,
             wall_detector,
             wall_voicer,
+            modulation_emitter,
             rng,
             input_listener,
             perturbation_router,
@@ -142,6 +150,10 @@ impl ChainPipeline {
         osc: Option<&mut OscSink>,
     ) {
         self.clock_emitter.tick(&self.chain, midi, osc);
+    }
+
+    pub fn tick_modulation(&mut self, midi: &MidiSender) {
+        self.modulation_emitter.tick(&self.chain, midi);
     }
 
     pub fn process_walls(
