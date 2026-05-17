@@ -2,6 +2,7 @@
 
 use crate::config::PhysicsTargets;
 use crate::osc::{extract_messages, InboundMessage, InboundTarget};
+use crate::tui::{LogSource, TuiState};
 use rosc::decoder::MTU;
 use std::net::UdpSocket;
 use std::sync::{Arc, RwLock};
@@ -64,18 +65,19 @@ impl OscTargets {
 pub fn spawn_receiver(
     port: u16,
     targets: OscTargets,
+    tui_state: Option<Arc<TuiState>>,
 ) -> std::io::Result<u16> {
     let socket = UdpSocket::bind(("0.0.0.0", port))?;
     let bound_port = socket.local_addr()?.port();
 
     thread::spawn(move || {
-        receiver_loop(socket, targets);
+        receiver_loop(socket, targets, tui_state);
     });
 
     Ok(bound_port)
 }
 
-fn receiver_loop(socket: UdpSocket, targets: OscTargets) {
+fn receiver_loop(socket: UdpSocket, targets: OscTargets, tui_state: Option<Arc<TuiState>>) {
     let mut buf = [0u8; MTU];
 
     loop {
@@ -95,7 +97,46 @@ fn receiver_loop(socket: UdpSocket, targets: OscTargets) {
         }
 
         for msg in messages {
+            if let Some(ref tui) = tui_state {
+                let content = format_inbound_message(&msg);
+                tui.push_log(LogSource::Osc, content);
+            }
             apply(&targets, msg);
+        }
+    }
+}
+
+fn format_inbound_message(msg: &InboundMessage) -> String {
+    match msg {
+        InboundMessage::SetKt(InboundTarget::Chain(c), v) => {
+            format!("{}/kt {:.3}", c.osc_prefix(), v)
+        }
+        InboundMessage::SetEps(InboundTarget::Chain(c), v) => {
+            format!("{}/eps {:.3}", c.osc_prefix(), v)
+        }
+        InboundMessage::SetJ(InboundTarget::Chain(c), v) => {
+            format!("{}/j {:.3}", c.osc_prefix(), v)
+        }
+        InboundMessage::SetW(InboundTarget::Chain(c), v) => {
+            format!("{}/w {:.3}", c.osc_prefix(), v)
+        }
+        InboundMessage::SetKt(InboundTarget::Both, v) => {
+            format!("/both/kt {:.3}", v)
+        }
+        InboundMessage::SetEps(InboundTarget::Both, v) => {
+            format!("/both/eps {:.3}", v)
+        }
+        InboundMessage::SetJ(InboundTarget::Both, v) => {
+            format!("/both/j {:.3}", v)
+        }
+        InboundMessage::SetW(InboundTarget::Both, v) => {
+            format!("/both/w {:.3}", v)
+        }
+        InboundMessage::SetCouplingStrengthAB(v) => {
+            format!("/coupling/strength_ab {:.3}", v)
+        }
+        InboundMessage::SetCouplingStrengthBA(v) => {
+            format!("/coupling/strength_ba {:.3}", v)
         }
     }
 }

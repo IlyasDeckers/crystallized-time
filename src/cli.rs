@@ -35,4 +35,8 @@ pub struct Cli {
     /// Which MIDI input port to open. Absence runs the chain without input.
     #[arg(long)]
     pub input_port: Option<usize>,
+
+    /// Enable the TUI monitor (ratatui-based terminal dashboard).
+    #[arg(short = 't', long, default_value_t = false)]
+    pub tui: bool,
 }

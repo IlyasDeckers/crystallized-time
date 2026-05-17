@@ -11,6 +11,7 @@ mod wall_midi;
 mod walls;
 mod input;
 mod perturbation;
+mod tui;
 
 use crate::cli::Cli;
 // These `use` imports bring `chain` and `config` into the binary crate root so
@@ -67,12 +68,31 @@ fn main() {
         _ => None,
     };
 
+    let bpm = 60.0 / config.tempo.drive_period_secs;
+
+    let tui_state = if cli.tui {
+        let has_b = config.chain_b.is_some();
+        let state = Arc::new(tui::TuiState::new(bpm, Arc::clone(&running), has_b));
+        if let Some(ref c) = config.coupling {
+            if let Ok(mut coupl) = state.coupling.write() {
+                *coupl = Some(tui::CouplingInfo {
+                    shape: format!("{:?}", c.shape),
+                    strength_ab: c.strength_ab,
+                    strength_ba: c.strength_ba,
+                });
+            }
+        }
+        Some(state)
+    } else {
+        None
+    };
+
     let osc_targets = osc_io::OscTargets::new(
         Arc::clone(&targets_a),
         targets_b.as_ref().map(Arc::clone),
         coupling_targets.as_ref().map(Arc::clone),
     );
-    let osc_sink = start_osc(&config, osc_targets);
+    let osc_sink = start_osc(&config, osc_targets, tui_state.clone());
 
     let mut runtime = Runtime::build(
         &config,
@@ -83,7 +103,13 @@ fn main() {
         coupling_targets,
         input_listener,
         perturbation_router,
+        tui_state.clone(),
     );
+
+    if let Some(tui_handle) = cli.tui.then(|| tui::spawn(tui_state.unwrap())) {
+        // TUI thread runs independently; cleaned up when running goes false
+        let _ = tui_handle;
+    }
 
     let total_ticks =
         cli.periods.unwrap_or(20_000) * config.chain_a.physics.ticks_per_period as u64;
@@ -185,9 +211,10 @@ fn open_input(
 fn start_osc(
     config: &Config,
     targets: osc_io::OscTargets,
+    tui_state: Option<Arc<tui::TuiState>>,
 ) -> Option<osc_io::OscSink> {
     if let Some(port) = config.osc.listen_port {
-        match osc_io::spawn_receiver(port, targets) {
+        match osc_io::spawn_receiver(port, targets, tui_state) {
             Ok(bound) => println!("OSC: listening on port {}", bound),
             Err(e) => {
                 eprintln!("Failed to bind OSC listener on port {}: {}", port, e);

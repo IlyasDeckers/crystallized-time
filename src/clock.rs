@@ -39,10 +39,10 @@ impl ClockEmitter {
         chain: &SpinChain,
         sender: &MidiSender,
         osc_sink: Option<&mut crate::osc_io::OscSink>,
-    ) {
+    ) -> bool {
         if !self.config.enabled {
             self.prev_m = chain.global_magnetization();
-            return;
+            return false;
         }
 
         let current_m = chain.global_magnetization();
@@ -60,9 +60,12 @@ impl ClockEmitter {
                 });
             }
             self.last_pulse_tick = chain.tick;
+            self.prev_m = current_m;
+            return true;
         }
 
         self.prev_m = current_m;
+        false
     }
 
     /// Pure decision: should this tick emit a pulse?

@@ -86,6 +86,13 @@ impl CouplingState {
     /// Read-side accessors. The injector pulls these once per tick.
     pub fn current_ab(&self) -> f64 { self.current_ab }
     pub fn current_ba(&self) -> f64 { self.current_ba }
+    pub fn shape_string(&self) -> String {
+        match self.shape {
+            CouplingShape::MeanFieldZ => "MeanFieldZ".to_string(),
+            CouplingShape::SitePaired => "SitePaired".to_string(),
+            CouplingShape::SharedDrive => "SharedDrive".to_string(),
+        }
+    }
 
     /// Advance the smoothed strengths toward their targets by one tick's
     /// worth of exponential decay. Uses the kt alpha as a stand-in for

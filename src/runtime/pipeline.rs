@@ -12,6 +12,7 @@ use crate::osc_io::OscSink;
 use crate::perturbation::PerturbationRouter;
 use crate::wall_midi::WallVoiceAllocator;
 use crate::walls::WallDetector;
+use crate::tui::{LogSource, TuiState};
 use arc_swap::ArcSwap;
 use crystallized_time::chain::SpinChain;
 use crystallized_time::chain_id::ChainId;
@@ -110,7 +111,7 @@ impl ChainPipeline {
         self.chain.step(&mut self.rng);
     }
 
-    pub fn apply_input_perturbations(&mut self) {
+    pub fn apply_input_perturbations(&mut self, tui: Option<&TuiState>) {
         let (Some(listener), Some(router)) = (
             self.input_listener.as_ref(),
             self.perturbation_router.as_ref(),
@@ -122,6 +123,11 @@ impl ChainPipeline {
             if let Some((site, kind)) = router.route(msg, self.n_sites) {
                 self.chain.perturb(site, kind);
             }
+            if let Some(tui) = tui {
+                let ch = (msg.status & 0x0F) + 1;
+                let content = format!("ch{} n{} v{}", ch, msg.data1, msg.data2);
+                tui.push_log(LogSource::Midi, content);
+            }
         }
     }
 
@@ -129,8 +135,9 @@ impl ChainPipeline {
         &mut self,
         midi: &MidiSender,
         mut osc: Option<&mut OscSink>,
-    ) {
+    ) -> usize {
         let events = self.detector.check(&self.chain);
+        let count = events.len();
         for event in events {
             midi.send_gate(event);
             if let Some(sink) = osc.as_deref_mut() {
@@ -142,14 +149,15 @@ impl ChainPipeline {
                 });
             }
         }
+        count
     }
 
     pub fn tick_clock(
         &mut self,
         midi: &MidiSender,
         osc: Option<&mut OscSink>,
-    ) {
-        self.clock_emitter.tick(&self.chain, midi, osc);
+    ) -> bool {
+        self.clock_emitter.tick(&self.chain, midi, osc)
     }
 
     pub fn tick_modulation(&mut self, midi: &MidiSender) {
@@ -160,11 +168,21 @@ impl ChainPipeline {
         &mut self,
         midi: &MidiSender,
         mut osc: Option<&mut OscSink>,
-    ) {
+    ) -> (usize, usize, usize) {
         let wall_events = self.wall_detector.check(&self.chain);
+        let mut created = 0usize;
+        let mut moved = 0usize;
+        let mut destroyed = 0usize;
         for event in &wall_events {
+            use crate::walls::WallEvent;
+            match event {
+                WallEvent::Created { .. } => created += 1,
+                WallEvent::Moved { .. } => moved += 1,
+                WallEvent::Destroyed { .. } => destroyed += 1,
+            }
             self.wall_voicer.handle(event, midi, osc.as_deref_mut());
         }
+        (created, moved, destroyed)
     }
 
     pub fn push_state(&self, sink: &mut OscSink) {
@@ -175,5 +193,17 @@ impl ChainPipeline {
             self.chain.global_magnetization(),
             self.wall_detector.wall_count(),
         );
+    }
+
+    pub fn get_magnetization(&self) -> f64 {
+        self.chain.global_magnetization()
+    }
+
+    pub fn get_wall_count(&self) -> usize {
+        self.wall_detector.wall_count()
+    }
+
+    pub fn get_physics_config(&self) -> PhysicsConfig {
+        (*self.physics_arc.load_full()).clone()
     }
 }

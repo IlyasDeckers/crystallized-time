@@ -2,6 +2,7 @@ use crate::input::MidiInputListener;
 use crate::midi::MidiSender;
 use crate::osc_io::OscSink;
 use crate::perturbation::PerturbationRouter;
+use crate::tui::{CouplingInfo, LogSource, TuiState};
 use crystallized_time::chain_id::ChainId;
 use crystallized_time::config::{
     Config, PhysicsTargets, SmoothingAlphas, SmoothingConfig,
@@ -23,6 +24,7 @@ pub struct Runtime {
     alphas: SmoothingAlphas,
     tick_duration: Duration,
     gate_length_ms: u64,
+    tui_state: Option<Arc<TuiState>>,
 }
 
 impl Runtime {
@@ -36,6 +38,7 @@ impl Runtime {
         coupling_targets: Option<Arc<RwLock<CouplingTargets>>>,
         input_listener: Option<MidiInputListener>,
         perturbation_router: Option<PerturbationRouter>,
+        tui_state: Option<Arc<TuiState>>,
     ) -> Self {
         let dt_real_secs =
             config.tempo.drive_period_secs / config.chain_a.physics.ticks_per_period as f64;
@@ -100,6 +103,7 @@ impl Runtime {
             alphas,
             tick_duration,
             gate_length_ms: config.chain_a.midi.gate_length_ms,
+            tui_state,
         }
     }
 
@@ -126,7 +130,7 @@ impl Runtime {
         }
     }
 
-    fn step(&mut self, _tick: u64) {
+    fn step(&mut self, tick: u64) {
         // Phase 1: smoothing. Each pipeline independent.
         for p in &self.pipelines {
             p.advance_smoothing(&self.alphas);
@@ -149,15 +153,32 @@ impl Runtime {
 
         // Phase 3: input. Each pipeline drains its own MIDI input.
         for p in &mut self.pipelines {
-            p.apply_input_perturbations();
+            p.apply_input_perturbations(self.tui_state.as_deref());
         }
 
         // Phase 4: emit. Site events, clock, modulation CC, walls. Per-pipeline.
         for p in &mut self.pipelines {
-            p.emit_site_events(&self.midi_sender, self.osc_sink.as_mut());
-            p.tick_clock(&self.midi_sender, self.osc_sink.as_mut());
+            let gate_count = p.emit_site_events(&self.midi_sender, self.osc_sink.as_mut());
+            let pulsed = p.tick_clock(&self.midi_sender, self.osc_sink.as_mut());
             p.tick_modulation(&self.midi_sender);
-            p.process_walls(&self.midi_sender, self.osc_sink.as_mut());
+            let (created, _moved, destroyed) =
+                p.process_walls(&self.midi_sender, self.osc_sink.as_mut());
+
+            if let Some(tui) = self.tui_state.as_deref() {
+                let label = p.id.osc_prefix().trim_start_matches('/');
+                for i in 0..gate_count {
+                    tui.push_log(LogSource::Internal, format!("GATE {} #{}", label, i));
+                }
+                if pulsed {
+                    tui.push_log(LogSource::Internal, format!("CLOCK {}", label));
+                }
+                for _ in 0..created {
+                    tui.push_log(LogSource::Internal, format!("WALL {} new", label));
+                }
+                for _ in 0..destroyed {
+                    tui.push_log(LogSource::Internal, format!("WALL {} destroyed", label));
+                }
+            }
         }
 
         // Phase 5: state push + flush.
@@ -166,6 +187,59 @@ impl Runtime {
                 p.push_state(sink);
             }
             sink.flush_tick();
+        }
+
+        // Phase 6: TUI state update.
+        self.update_tui_state(tick);
+    }
+
+    fn update_tui_state(&self, tick: u64) {
+        let tui = match self.tui_state.as_deref() {
+            Some(t) => t,
+            None => return,
+        };
+
+        tui.tick.store(tick, std::sync::atomic::Ordering::Relaxed);
+
+        // Update coupling info.
+        if let Some(ref coupling) = self.coupling {
+            if let Ok(mut tui_coupling) = tui.coupling.write() {
+                *tui_coupling = Some(CouplingInfo {
+                    shape: coupling.shape_string(),
+                    strength_ab: coupling.current_ab(),
+                    strength_ba: coupling.current_ba(),
+                });
+            }
+        }
+
+        // Update per-chain state.
+        for (i, p) in self.pipelines.iter().enumerate() {
+            let chain_state = &tui.chains[i];
+            if !chain_state.present {
+                continue;
+            }
+
+            let m = p.get_magnetization();
+            let wc = p.get_wall_count();
+
+            let _ = chain_state.magnetization.write().map(|mut g| *g = m);
+            let _ = chain_state.wall_count.write().map(|mut g| *g = wc as u64);
+
+            // Push magnetization to scope ring buffer.
+            if let Ok(mut bufs) = tui.scope_bufs.write() {
+                let buf = &mut bufs[i];
+                if buf.len() >= tui.scope_buf_cap {
+                    buf.pop_front();
+                }
+                buf.push_back(m);
+            }
+
+            // Read physics parameters from ArcSwap.
+            let physics = p.get_physics_config();
+            let _ = chain_state.kt.write().map(|mut g| *g = physics.kt);
+            let _ = chain_state.eps.write().map(|mut g| *g = physics.eps);
+            let _ = chain_state.j.write().map(|mut g| *g = physics.j);
+            let _ = chain_state.w.write().map(|mut g| *g = physics.w);
         }
     }
 
