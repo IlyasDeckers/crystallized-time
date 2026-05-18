@@ -1,0 +1,110 @@
+# Crystallized Time — default configuration.
+#
+# Reproduces the program's pre-config-file defaults exactly. Edit from here.
+#
+# Channels are 1-based (1..=16). MIDI pitches are 0..=127.
+# Comment a section out (or delete it) to fall back to compiled defaults.
+
+[tempo]
+bpm = 17     # drive period ~3.5 s — the author's piece uses a slow fundamental
+
+# OSC. Comment out listen_port / send_address to disable each side.
+[osc]
+listen_port = 9000
+send_address = "127.0.0.1:9001"
+state_rate_hz = 50
+enable_state = true
+
+# Physics. applies to every chain that doesn't define its own [chain_x.physics].
+[chain_a]
+seed = 47
+
+[chain_a.physics]
+kt = 0.01
+eps = 0.01
+j = 1.2
+w = 2.0
+n_sites = 8
+ticks_per_period = 25
+
+[chain_b]
+seed = 83
+
+[chain_b.physics]
+kt = 0.05
+eps = 0.17
+j = 0.10
+w = 1.5
+n_sites = 9
+ticks_per_period = 25
+kick_angle = 2.0944
+
+[chain_b.gates]
+voice_0 = { channel = 9, pitch = 60 }
+voice_3 = { channel = 10, pitch = 64 }
+voice_6 = { channel = 11, pitch = 67 }
+gate_length_ms = 50
+
+[chain_b.walls]
+voice_0 = 12
+voice_1 = 13
+voice_2 = 14
+pitch_low = 36
+pitch_high = 84
+motion_cc = 1
+repitch_on_move = true
+
+[chain_b.clock]
+channel = 15
+
+# [chain_b.modulation]
+# enabled = true
+# channel = 9
+# cc_number = 2
+
+# Gate voices. `voice_N` means "listen to chain site N". Default mapping:
+# sites 0, 2, 4, 6 all on channel 1, with a Cmaj7 voicing (C3, E3, G3, B3).
+[chain_a.gates]
+voice_0 = { channel = 1, pitch = 48 }    # C3
+voice_2 = { channel = 2, pitch = 51 }    # E3
+voice_4 = { channel = 3, pitch = 55 }    # G3
+voice_6 = { channel = 4, pitch = 58 }    # B3
+gate_length_ms = 50
+
+# Wall voice pool
+# Delete this whole section to disable wall output entirely.
+[chain_a.walls]
+voice_0 = 5
+voice_1 = 6
+voice_2 = 7
+voice_3 = 8
+pitch_low = 36          # C2
+pitch_high = 60         # C6
+motion_cc = 0           # 0 disables; 1 = mod wheel
+repitch_on_move = true
+
+# Clock
+[chain_a.clock]
+channel = 16
+
+# Modulation CC (optional). Uncomment to send per-tick summed σ_z on a CC.
+# [chain_a.modulation]
+# enabled = true
+# channel = 1    # defaults to first gate voice channel if omitted
+# cc_number = 1
+
+[coupling]
+shape = "mean_field_z"
+strength = 0 # convenience: sets both directions
+# Or set explicitly:
+# strength_ab = 0.1         # chain A → chain B
+# strength_ba = 0.05        # chain B → chain A
+
+[input]
+[input.perturbation]
+base_note = 60         # MIDI note that maps to site 0. C4 by default.
+kind = "flip"        # "flip" | "rotate" | "field_spike"
+# axis and magnitude are ignored when kind = "flip"; uncomment for rotate / field_spike:
+# axis = "x"
+# magnitude = 0.6
+velocity_scale = 1.0   # 1.0 = full mag at v127, 0 = silent

@@ -5,3 +5,6 @@ Cargo.lock
 .vscode/
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+/.gitnexus/
+/.agents/
+.config.toml

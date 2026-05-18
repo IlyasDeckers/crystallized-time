@@ -1,6 +1,6 @@
 [package]
 name = "crystallized_time"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 description = "Time-crystal-driven MIDI generator with OSC parameter control and MIDI input perturbation"
 license = "MIT"
